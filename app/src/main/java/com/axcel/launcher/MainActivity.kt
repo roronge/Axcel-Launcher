@@ -781,7 +781,7 @@ fun CustomNotificationShadeOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Rounded.NotificationsPaused, contentDescription = null, tint = Color(0xFFFDE68A))
+                    Icon(Icons.Rounded.NotificationsOff, contentDescription = null, tint = Color(0xFFFDE68A))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Aktifkan Akses Notifikasi",
@@ -2092,7 +2092,7 @@ fun AppContextDialog(
                 onClick = onTogglePin
             )
             ContextMenuRow(
-                icon = Icons.Rounded.Dock,
+                icon = Icons.Rounded.Apps,
                 text = if (isDocked) "Hapus dari Dock Bawah" else "Pasang di Dock Bawah",
                 onClick = onToggleDock
             )
