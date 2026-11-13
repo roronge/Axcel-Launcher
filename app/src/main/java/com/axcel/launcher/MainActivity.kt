@@ -40,6 +40,9 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Person
@@ -103,8 +107,28 @@ data class PhoneAppInfo(
     val label: String,
     val packageName: String,
     val icon: ImageBitmap,
-    val dominantColor: Color
+    val dominantColor: Color,
+    val category: AppCategory
 )
+
+enum class AppCategory(val title: String) {
+    ALL("Semua"),
+    SOCIAL("Komunikasi"),
+    MEDIA("Hiburan"),
+    FINANCE("Belanja & Keuangan"),
+    TOOLS("Alat & Sistem")
+}
+
+enum class HomeLayoutMode(val title: String, val desc: String) {
+    PLAYING_CARDS("Kipas Kartu Remi", "Susunan kartu remi interaktif di layar utama"),
+    POCO_GRID("Grid Modern (4 Kolom)", "Grid aplikasi rapi ala POCO dengan bingkai seragam")
+}
+
+enum class IconScalePreset(val title: String, val dpSize: Float) {
+    SMALL("Kecil", 48f),
+    MEDIUM("Sedang", 58f),
+    LARGE("Besar", 68f)
+}
 
 enum class AmbientTheme(val title: String, val topColor: Color, val midColor: Color, val bottomColor: Color) {
     BABY_MINT("Baby Mint", Color(0xFF134E4A), Color(0xFF0A1F24), Color(0xFF050A0E)),
@@ -126,7 +150,7 @@ enum class RobotType(val title: String, val subtitle: String, val accent: Color)
 enum class DeckFilter(val label: String, val suit: String) {
     ALL("Semua", "♠♥♦♣"),
     FAVORITES("Favorit", "♥"),
-    SOCIAL("Sosial & Chat", "♦"),
+    SOCIAL("Sosial", "♦"),
     TOOLS("Utilitas", "♣")
 }
 
@@ -145,13 +169,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BackHandler(enabled = true) {}
-            AxcelPhoneLauncherScreen()
+            AxcelFullLauncherScreen()
         }
     }
 }
 
 @Composable
-fun AxcelPhoneLauncherScreen() {
+fun AxcelFullLauncherScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("axcel_phone_prefs", Context.MODE_PRIVATE) }
 
@@ -162,6 +186,27 @@ fun AxcelPhoneLauncherScreen() {
     var dockPackages by remember {
         mutableStateOf(prefs.getStringSet("dock_apps", emptySet())?.toList() ?: emptyList())
     }
+    var hiddenPackages by remember {
+        mutableStateOf(prefs.getStringSet("hidden_apps", emptySet())?.toList() ?: emptyList())
+    }
+    var vaultPin by remember {
+        mutableStateOf(prefs.getString("vault_pin", "1234") ?: "1234")
+    }
+
+    // Preferensi Pengaturan Launcher (Pengganti POCO Launcher Settings)
+    var homeLayoutMode by remember {
+        mutableStateOf(
+            HomeLayoutMode.entries.find { it.name == prefs.getString("home_layout_mode", "PLAYING_CARDS") }
+                ?: HomeLayoutMode.PLAYING_CARDS
+        )
+    }
+    var iconScalePreset by remember {
+        mutableStateOf(
+            IconScalePreset.entries.find { it.name == prefs.getString("icon_scale", "MEDIUM") }
+                ?: IconScalePreset.MEDIUM
+        )
+    }
+    var showAppLabels by remember { mutableStateOf(prefs.getBoolean("show_app_labels", true)) }
     var selectedTheme by remember {
         mutableStateOf(
             AmbientTheme.entries.find { it.name == prefs.getString("ambient_theme", "BABY_MINT") }
@@ -179,14 +224,18 @@ fun AxcelPhoneLauncherScreen() {
     var isLockScreenEnabled by remember { mutableStateOf(prefs.getBoolean("custom_lockscreen_enabled", true)) }
     var hasNotifPermission by remember { mutableStateOf(NotificationStore.isPermissionGranted(context)) }
 
+    // State Overlay & Layar Penuh
     var showNotifShade by remember { mutableStateOf(false) }
+    var showAppDrawer by remember { mutableStateOf(false) }
+    var showLauncherSettings by remember { mutableStateOf(false) }
+    var showHiddenVaultDialog by remember { mutableStateOf(false) }
+    var showRobotPicker by remember { mutableStateOf(false) }
+
     var activeFilter by remember { mutableStateOf(DeckFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var contextMenuApp by remember { mutableStateOf<PhoneAppInfo?>(null) }
-    var showRobotPicker by remember { mutableStateOf(false) }
     var cuteReactionBurst by remember { mutableIntStateOf(0) }
 
-    // Perbarui status izin & default launcher secara berkala
     LaunchedEffect(Unit) {
         while (true) {
             isDefaultHome = checkIsDefaultLauncher(context)
@@ -214,7 +263,7 @@ fun AxcelPhoneLauncherScreen() {
         val loaded = loadPhoneApps(context)
         allApps = loaded
         if (pinnedPackages.isEmpty() && loaded.isNotEmpty()) {
-            val defaults = loaded.take(6).map { it.packageName }
+            val defaults = loaded.take(8).map { it.packageName }
             pinnedPackages = defaults
             prefs.edit().putStringSet("pinned_apps", defaults.toSet()).apply()
         }
@@ -232,32 +281,26 @@ fun AxcelPhoneLauncherScreen() {
         }
     }
 
-    val filteredApps = remember(allApps, activeFilter, pinnedPackages, searchQuery) {
-        var list = when (activeFilter) {
-            DeckFilter.ALL -> allApps
-            DeckFilter.FAVORITES -> allApps.filter { pinnedPackages.contains(it.packageName) }
-            DeckFilter.SOCIAL -> allApps.filter {
-                val p = it.packageName.lowercase()
-                p.contains("whatsapp") || p.contains("telegram") || p.contains("instagram") ||
-                        p.contains("facebook") || p.contains("tiktok") || p.contains("twitter") ||
-                        p.contains("youtube") || p.contains("discord") || p.contains("messenger")
-            }.ifEmpty { allApps.take(10) }
-            DeckFilter.TOOLS -> allApps.filter {
-                val p = it.packageName.lowercase()
-                p.contains("settings") || p.contains("camera") || p.contains("gallery") ||
-                        p.contains("photos") || p.contains("chrome") || p.contains("maps") ||
-                        p.contains("calculator") || p.contains("clock") || p.contains("files")
-            }.ifEmpty { allApps.takeLast(10) }
-        }
+    // Aplikasi publik (tidak disembunyikan di Hidden Space)
+    val visibleApps = remember(allApps, hiddenPackages) {
+        allApps.filter { !hiddenPackages.contains(it.packageName) }
+    }
 
+    val filteredHomeApps = remember(visibleApps, activeFilter, pinnedPackages, searchQuery) {
+        var list = when (activeFilter) {
+            DeckFilter.ALL -> visibleApps
+            DeckFilter.FAVORITES -> visibleApps.filter { pinnedPackages.contains(it.packageName) }
+            DeckFilter.SOCIAL -> visibleApps.filter { it.category == AppCategory.SOCIAL }.ifEmpty { visibleApps.take(10) }
+            DeckFilter.TOOLS -> visibleApps.filter { it.category == AppCategory.TOOLS }.ifEmpty { visibleApps.takeLast(10) }
+        }
         if (searchQuery.isNotBlank()) {
             list = list.filter { it.label.contains(searchQuery, ignoreCase = true) }
         }
         list
     }
 
-    val dockApps = remember(allApps, dockPackages) {
-        dockPackages.mapNotNull { pkg -> allApps.find { it.packageName == pkg } }.take(4)
+    val dockApps = remember(visibleApps, dockPackages) {
+        dockPackages.mapNotNull { pkg -> visibleApps.find { it.packageName == pkg } }.take(4)
     }
 
     val listState = rememberLazyListState()
@@ -276,10 +319,10 @@ fun AxcelPhoneLauncherScreen() {
         }
     }
 
-    val safeCenterIndex = centerCardIndex.coerceIn(0, (filteredApps.size - 1).coerceAtLeast(0))
-    val activeCardApp = filteredApps.getOrNull(safeCenterIndex)
+    val safeCenterIndex = centerCardIndex.coerceIn(0, (filteredHomeApps.size - 1).coerceAtLeast(0))
+    val activeCardApp = filteredHomeApps.getOrNull(safeCenterIndex)
 
-        val scrollOffsetFraction by remember {
+    val scrollOffsetFraction by remember {
         derivedStateOf {
             val info = listState.layoutInfo
             val item = info.visibleItemsInfo.find { it.index == safeCenterIndex }
@@ -317,12 +360,13 @@ fun AxcelPhoneLauncherScreen() {
                     )
                 )
             )
+            // Gestur POCO Launcher: Tarik Bawah = Notification Center, Tarik Atas = App Drawer
             .pointerInput(Unit) {
                 detectVerticalDragGestures { _, dragAmount ->
-                    if (dragAmount > 28f) {
+                    if (dragAmount > 32f && !showAppDrawer && !showLauncherSettings) {
                         showNotifShade = true
-                    } else if (dragAmount < -28f) {
-                        showNotifShade = false
+                    } else if (dragAmount < -32f && !showNotifShade && !showLauncherSettings) {
+                        showAppDrawer = true
                     }
                 }
             }
@@ -340,36 +384,26 @@ fun AxcelPhoneLauncherScreen() {
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // 0. CUSTOM STATUS & NOTIFICATION BAR
             CustomAxcelStatusBar(
                 notifCount = NotificationStore.activeNotifications.size,
                 onOpenShade = { showNotifShade = true }
             )
 
+            // 1. HEADER UTAMA + TOMBOL PENGATURAN LAUNCHER (GANTI POCO LAUNCHER)
             PhoneTopHeader(
                 isDefaultHome = isDefaultHome,
-                isLockEnabled = isLockScreenEnabled,
-                currentTheme = selectedTheme,
                 currentRobot = selectedRobot,
+                onOpenLauncherSettings = { showLauncherSettings = true },
                 onOpenRobotPicker = { showRobotPicker = true },
-                onCycleTheme = {
-                    val next = (selectedTheme.ordinal + 1) % AmbientTheme.entries.size
-                    selectedTheme = AmbientTheme.entries[next]
-                    prefs.edit().putString("ambient_theme", selectedTheme.name).apply()
-                },
-                onToggleLockScreen = {
-                    isLockScreenEnabled = !isLockScreenEnabled
-                    prefs.edit().putBoolean("custom_lockscreen_enabled", isLockScreenEnabled).apply()
-                    if (isLockScreenEnabled) {
-                        context.startActivity(Intent(context, LockScreenActivity::class.java))
-                    }
-                },
                 onRequestDefaultHome = { openDefaultLauncherSettings(context) }
             )
 
+            // 2. PANGGUNG BABY AXCEL & INFO KARTU AKTIF
             RobotCompanionStage(
                 app = activeCardApp,
-                cardNumber = if (filteredApps.isEmpty()) 0 else safeCenterIndex + 1,
-                totalCards = filteredApps.size,
+                cardNumber = if (filteredHomeApps.isEmpty()) 0 else safeCenterIndex + 1,
+                totalCards = filteredHomeApps.size,
                 isPinned = activeCardApp != null && pinnedPackages.contains(activeCardApp.packageName),
                 robotType = selectedRobot,
                 customPhoto = customPhotoBitmap,
@@ -384,6 +418,7 @@ fun AxcelPhoneLauncherScreen() {
                 }
             )
 
+            // 3. TAB FILTER KATEGORI
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -403,19 +438,20 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
+            // 4. AREA UTAMA APLIKASI (Bisa Kipas Kartu Remi atau Grid Modern ala POCO sesuai Setelan)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                if (filteredApps.isEmpty()) {
+                if (filteredHomeApps.isEmpty()) {
                     Text(
-                        text = "Tidak ada kartu aplikasi ditemukan",
+                        text = "Tidak ada aplikasi ditemukan",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 15.sp
                     )
-                } else {
+                } else if (homeLayoutMode == HomeLayoutMode.PLAYING_CARDS) {
                     LazyRow(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -423,7 +459,7 @@ fun AxcelPhoneLauncherScreen() {
                         horizontalArrangement = Arrangement.spacedBy((-32).dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        itemsIndexed(filteredApps, key = { _, app -> "card_${app.packageName}" }) { index, app ->
+                        itemsIndexed(filteredHomeApps, key = { _, app -> "card_${app.packageName}" }) { index, app ->
                             val isSelected = index == safeCenterIndex
                             val distance = index - safeCenterIndex
 
@@ -433,26 +469,96 @@ fun AxcelPhoneLauncherScreen() {
                                 isSelected = isSelected,
                                 distanceFromCenter = distance,
                                 isPinned = pinnedPackages.contains(app.packageName),
+                                showLabel = showAppLabels,
                                 onClick = { launchPhoneApp(context, app.packageName) },
                                 onLongClick = { contextMenuApp = app }
                             )
                         }
                     }
+                } else {
+                    // Mode Grid Modern Ala POCO Launcher
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(filteredHomeApps, key = { "grid_${it.packageName}" }) { app ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .combinedClickable(
+                                        onClick = { launchPhoneApp(context, app.packageName) },
+                                        onLongClick = { contextMenuApp = app }
+                                    )
+                                    .padding(4.dp)
+                            ) {
+                                UnifiedLauncherAppIcon(
+                                    app = app,
+                                    size = iconScalePreset.dpSize.dp,
+                                    isHighlighted = pinnedPackages.contains(app.packageName)
+                                )
+                                if (showAppLabels) {
+                                    Text(
+                                        text = app.label,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
+            // 5. TOMBOL TARIK LACI APLIKASI + SEARCH BAR + BOTTOM GLASS DOCK
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Indikator Buka Semua Aplikasi (App Drawer ala POCO)
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0xFF0E292B).copy(alpha = 0.72f))
+                        .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), CircleShape)
+                        .clickable { showAppDrawer = true }
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowUp,
+                        contentDescription = "Semua Aplikasi",
+                        tint = Color(0xFF6EE7B7),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Semua Aplikasi (${visibleApps.size})",
+                        color = Color(0xFFA7F3D0),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     placeholder = {
                         Text(
-                            "Cari kartu aplikasi...",
+                            "Cari aplikasi terinstal...",
                             color = Color.White.copy(alpha = 0.55f),
                             fontSize = 13.sp
                         )
@@ -515,6 +621,83 @@ fun AxcelPhoneLauncherScreen() {
             }
         }
 
+        // OVERLAY 1: LACI APLIKASI PENUH ALA POCO LAUNCHER (APP DRAWER + KATEGORI + HIDDEN VAULT)
+        AnimatedVisibility(
+            visible = showAppDrawer,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.zIndex(90f)
+        ) {
+            PocoStyleAppDrawerOverlay(
+                apps = visibleApps,
+                hiddenCount = hiddenPackages.size,
+                iconSize = iconScalePreset.dpSize.dp,
+                showLabels = showAppLabels,
+                onLaunchApp = { pkg ->
+                    showAppDrawer = false
+                    launchPhoneApp(context, pkg)
+                },
+                onLongClickApp = { app -> contextMenuApp = app },
+                onOpenHiddenVault = { showHiddenVaultDialog = true },
+                onOpenSettings = {
+                    showAppDrawer = false
+                    showLauncherSettings = true
+                },
+                onClose = { showAppDrawer = false }
+            )
+        }
+
+        // OVERLAY 2: PENGATURAN LAUNCHER PENGGANTI POCO LAUNCHER SETTINGS
+        AnimatedVisibility(
+            visible = showLauncherSettings,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.zIndex(95f)
+        ) {
+            AxcelLauncherSettingsScreen(
+                isDefaultHome = isDefaultHome,
+                homeLayoutMode = homeLayoutMode,
+                iconScalePreset = iconScalePreset,
+                showAppLabels = showAppLabels,
+                selectedTheme = selectedTheme,
+                selectedRobot = selectedRobot,
+                isLockScreenEnabled = isLockScreenEnabled,
+                hasNotifPermission = hasNotifPermission,
+                hiddenCount = hiddenPackages.size,
+                onRequestDefaultHome = { openDefaultLauncherSettings(context) },
+                onChangeLayoutMode = { mode ->
+                    homeLayoutMode = mode
+                    prefs.edit().putString("home_layout_mode", mode.name).apply()
+                },
+                onChangeIconScale = { preset ->
+                    iconScalePreset = preset
+                    prefs.edit().putString("icon_scale", preset.name).apply()
+                },
+                onToggleAppLabels = {
+                    showAppLabels = !showAppLabels
+                    prefs.edit().putBoolean("show_app_labels", showAppLabels).apply()
+                },
+                onChangeTheme = { theme ->
+                    selectedTheme = theme
+                    prefs.edit().putString("ambient_theme", theme.name).apply()
+                },
+                onOpenRobotPicker = { showRobotPicker = true },
+                onToggleLockScreen = {
+                    isLockScreenEnabled = !isLockScreenEnabled
+                    prefs.edit().putBoolean("custom_lockscreen_enabled", isLockScreenEnabled).apply()
+                },
+                onPreviewLockScreen = {
+                    context.startActivity(Intent(context, LockScreenActivity::class.java))
+                },
+                onRequestNotifAccess = {
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                },
+                onOpenHiddenVault = { showHiddenVaultDialog = true },
+                onClose = { showLauncherSettings = false }
+            )
+        }
+
+        // OVERLAY 3: CUSTOM NOTIFICATION BAR & CONTROL CENTER
         AnimatedVisibility(
             visible = showNotifShade,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -539,6 +722,29 @@ fun AxcelPhoneLauncherScreen() {
             )
         }
 
+        // DIALOG BRANKAS APLIKASI TERSEMBUNYI (HIDDEN SPACE ALA POCO LAUNCHER)
+        if (showHiddenVaultDialog) {
+            HiddenAppsVaultDialog(
+                allApps = allApps,
+                hiddenPackages = hiddenPackages,
+                savedPin = vaultPin,
+                onUpdatePin = { newPin ->
+                    vaultPin = newPin
+                    prefs.edit().putString("vault_pin", newPin).apply()
+                },
+                onUnhideApp = { pkg ->
+                    val updated = hiddenPackages - pkg
+                    hiddenPackages = updated
+                    prefs.edit().putStringSet("hidden_apps", updated.toSet()).apply()
+                },
+                onLaunchApp = { pkg ->
+                    showHiddenVaultDialog = false
+                    launchPhoneApp(context, pkg)
+                },
+                onDismiss = { showHiddenVaultDialog = false }
+            )
+        }
+
         if (showRobotPicker) {
             RobotPickerDialog(
                 selectedRobot = selectedRobot,
@@ -560,10 +766,12 @@ fun AxcelPhoneLauncherScreen() {
         contextMenuApp?.let { targetApp ->
             val isPinned = pinnedPackages.contains(targetApp.packageName)
             val isDocked = dockPackages.contains(targetApp.packageName)
+            val isHidden = hiddenPackages.contains(targetApp.packageName)
             AppContextDialog(
                 app = targetApp,
                 isPinned = isPinned,
                 isDocked = isDocked,
+                isHidden = isHidden,
                 onDismiss = { contextMenuApp = null },
                 onTogglePin = {
                     val updated = if (isPinned) pinnedPackages - targetApp.packageName
@@ -579,6 +787,13 @@ fun AxcelPhoneLauncherScreen() {
                     prefs.edit().putStringSet("dock_apps", updated.toSet()).apply()
                     contextMenuApp = null
                 },
+                onToggleHide = {
+                    val updated = if (isHidden) hiddenPackages - targetApp.packageName
+                    else hiddenPackages + targetApp.packageName
+                    hiddenPackages = updated
+                    prefs.edit().putStringSet("hidden_apps", updated.toSet()).apply()
+                    contextMenuApp = null
+                },
                 onAppInfo = {
                     openAppDetails(context, targetApp.packageName)
                     contextMenuApp = null
@@ -588,6 +803,691 @@ fun AxcelPhoneLauncherScreen() {
                     contextMenuApp = null
                 }
             )
+        }
+    }
+}
+
+/**
+ * Halaman Pengaturan Launcher Lengkap (Pengganti POCO Launcher Settings)
+ */
+@Composable
+fun AxcelLauncherSettingsScreen(
+    isDefaultHome: Boolean,
+    homeLayoutMode: HomeLayoutMode,
+    iconScalePreset: IconScalePreset,
+    showAppLabels: Boolean,
+    selectedTheme: AmbientTheme,
+    selectedRobot: RobotType,
+    isLockScreenEnabled: Boolean,
+    hasNotifPermission: Boolean,
+    hiddenCount: Int,
+    onRequestDefaultHome: () -> Unit,
+    onChangeLayoutMode: (HomeLayoutMode) -> Unit,
+    onChangeIconScale: (IconScalePreset) -> Unit,
+    onToggleAppLabels: () -> Unit,
+    onChangeTheme: (AmbientTheme) -> Unit,
+    onOpenRobotPicker: () -> Unit,
+    onToggleLockScreen: () -> Unit,
+    onPreviewLockScreen: () -> Unit,
+    onRequestNotifAccess: () -> Unit,
+    onOpenHiddenVault: () -> Unit,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF040A0E).copy(alpha = 0.97f))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header Setelan Launcher
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Setelan Axcel Launcher",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "Kustomisasi penuh pengganti POCO Launcher",
+                        color = Color(0xFF6EE7B7),
+                        fontSize = 12.sp
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Tutup", tint = Color.White)
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                // 1. Status Pengganti POCO Launcher (Default Home App)
+                item {
+                    SettingsSectionCard(title = "1. Launcher Utama Sistem (Ganti POCO Launcher)") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (isDefaultHome) Color(0xFF10B981).copy(alpha = 0.22f)
+                                    else Color(0xFFF59E0B).copy(alpha = 0.25f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable { onRequestDefaultHome() }
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isDefaultHome) "✓ Axcel Launcher Aktif sebagai Default"
+                                    else "Masih Menggunakan POCO Launcher / Bawaan",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (isDefaultHome) "Tap untuk membuka pilihan aplikasi beranda sistem"
+                                    else "Tap di sini lalu pilih Axcel Launcher sebagai Aplikasi Beranda Default",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Icon(
+                                imageVector = if (isDefaultHome) Icons.Rounded.CheckCircle else Icons.Rounded.Home,
+                                contentDescription = null,
+                                tint = if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24)
+                            )
+                        }
+                    }
+                }
+
+                // 2. Tata Letak Layar Utama & Ukuran Ikon
+                item {
+                    SettingsSectionCard(title = "2. Tata Letak Layar Utama & Ikon Seragam") {
+                        HomeLayoutMode.entries.forEach { mode ->
+                            val selected = mode == homeLayoutMode
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) Color(0xFF6EE7B7).copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f))
+                                    .border(
+                                        1.dp,
+                                        if (selected) Color(0xFF6EE7B7) else Color.Transparent,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { onChangeLayoutMode(mode) }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(mode.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text(mode.desc, color = Color.White.copy(0.65f), fontSize = 11.sp)
+                                }
+                                if (selected) {
+                                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF6EE7B7))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Ukuran Ikon Seragam:", color = Color(0xFFA7F3D0), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            IconScalePreset.entries.forEach { preset ->
+                                val active = preset == iconScalePreset
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(CircleShape)
+                                        .background(if (active) Color(0xFF6EE7B7) else Color.White.copy(alpha = 0.08f))
+                                        .clickable { onChangeIconScale(preset) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = preset.title,
+                                        color = if (active) Color.Black else Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleAppLabels() }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Tampilkan Nama Aplikasi di Bawah Ikon", color = Color.White, fontSize = 13.sp)
+                            Switch(checked = showAppLabels, onCheckedChange = { onToggleAppLabels() })
+                        }
+                    }
+                }
+
+                // 3. Karakter Baby Axcel & Tema Latar
+                item {
+                    SettingsSectionCard(title = "3. Karakter Baby Axcel & Tema Latar") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.06f))
+                                .clickable { onOpenRobotPicker() }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Karakter Aktif: ${selectedRobot.title}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("Tap untuk ganti foto galeri atau jenis robot", color = Color.White.copy(0.65f), fontSize = 11.sp)
+                            }
+                            Icon(Icons.Rounded.Person, contentDescription = null, tint = Color(0xFF6EE7B7))
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            AmbientTheme.entries.forEach { theme ->
+                                val active = theme == selectedTheme
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (active) Color(0xFF6EE7B7) else Color.White.copy(alpha = 0.08f))
+                                        .clickable { onChangeTheme(theme) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = theme.title,
+                                        color = if (active) Color.Black else Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Fitur Khas POCO Launcher: Brankas Aplikasi Tersembunyi, Lockscreen, & Notifikasi
+                item {
+                    SettingsSectionCard(title = "4. Privasi, Lockscreen & Notification Bar") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.06f))
+                                .clickable { onOpenHiddenVault() }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Brankas Aplikasi Tersembunyi ($hiddenCount)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("Sembunyikan aplikasi pribadi dengan PIN (PIN default: 1234)", color = Color.White.copy(0.65f), fontSize = 11.sp)
+                            }
+                            Icon(Icons.Rounded.Lock, contentDescription = null, tint = Color(0xFFFDE68A))
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleLockScreen() }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Custom Baby Axcel Lockscreen", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Aktifkan layar kunci seragam dengan slider & notifikasi", color = Color.White.copy(0.65f), fontSize = 11.sp)
+                            }
+                            Switch(checked = isLockScreenEnabled, onCheckedChange = { onToggleLockScreen() })
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF6EE7B7).copy(alpha = 0.22f))
+                                    .clickable { onPreviewLockScreen() }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Pratinjau Lockscreen", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (hasNotifPermission) Color(0xFF10B981).copy(alpha = 0.22f)
+                                        else Color(0xFFF59E0B).copy(alpha = 0.25f)
+                                    )
+                                    .clickable { onRequestNotifAccess() }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (hasNotifPermission) "✓ Akses Notif Aktif" else "Izin Notifikasi Bar",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.05f))
+                                .clickable { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Buka Pengaturan Sistem Android", color = Color.White.copy(0.85f), fontSize = 12.sp)
+                            Icon(Icons.Rounded.Settings, contentDescription = null, tint = Color.White.copy(0.7f), modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsSectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFF0D2124).copy(alpha = 0.85f))
+            .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.28f), RoundedCornerShape(20.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        content = {
+            Text(
+                text = title,
+                color = Color(0xFFFDE68A),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            content()
+        }
+    )
+}
+
+/**
+ * App Drawer Penuh Ala POCO Launcher dengan Tab Kategori Otomatis & Pencarian Cepat
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PocoStyleAppDrawerOverlay(
+    apps: List<PhoneAppInfo>,
+    hiddenCount: Int,
+    iconSize: Dp,
+    showLabels: Boolean,
+    onLaunchApp: (String) -> Unit,
+    onLongClickApp: (PhoneAppInfo) -> Unit,
+    onOpenHiddenVault: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onClose: () -> Unit
+) {
+    var selectedCategory by remember { mutableStateOf(AppCategory.ALL) }
+    var drawerSearch by remember { mutableStateOf("") }
+
+    val drawerList = remember(apps, selectedCategory, drawerSearch) {
+        var list = if (selectedCategory == AppCategory.ALL) apps
+        else apps.filter { it.category == selectedCategory }
+        if (drawerSearch.isNotBlank()) {
+            list = list.filter { it.label.contains(drawerSearch, ignoreCase = true) }
+        }
+        list
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF050D10).copy(alpha = 0.96f))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header App Drawer
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Semua Aplikasi",
+                        color = Color.White,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFFF59E0B).copy(alpha = 0.22f))
+                            .border(1.dp, Color(0xFFFBBF24), CircleShape)
+                            .clickable { onOpenHiddenVault() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Brankas ($hiddenCount)",
+                            color = Color(0xFFFDE68A),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .clickable { onOpenSettings() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.Settings, contentDescription = "Setelan", tint = Color(0xFF6EE7B7), modifier = Modifier.size(18.dp))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .clickable { onClose() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Tutup", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            // Tab Kategori Otomatis Ala POCO Launcher
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(AppCategory.entries) { cat ->
+                    val active = cat == selectedCategory
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (active) Color(0xFF6EE7B7) else Color(0xFF0E292B))
+                            .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), CircleShape)
+                            .clickable { selectedCategory = cat }
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = cat.title,
+                            color = if (active) Color.Black else Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Grid Semua Aplikasi Seragam
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(4),
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(drawerList, key = { "drawer_${it.packageName}" }) { app ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .combinedClickable(
+                                onClick = { onLaunchApp(app.packageName) },
+                                onLongClick = { onLongClickApp(app) }
+                            )
+                            .padding(4.dp)
+                    ) {
+                        UnifiedLauncherAppIcon(app = app, size = iconSize, isHighlighted = false)
+                        if (showLabels) {
+                            Text(
+                                text = app.label,
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Pencarian di Bagian Bawah App Drawer (Mudah Dijangkau Ibu Jari ala POCO)
+            OutlinedTextField(
+                value = drawerSearch,
+                onValueChange = { drawerSearch = it },
+                placeholder = { Text("Cari di laci aplikasi...", color = Color.White.copy(0.55f), fontSize = 13.sp) },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF6EE7B7)) },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = CircleShape,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF6EE7B7),
+                    unfocusedBorderColor = Color(0xFF6EE7B7).copy(alpha = 0.3f),
+                    focusedContainerColor = Color(0xFF0D2426),
+                    unfocusedContainerColor = Color(0xFF0A1B1E)
+                )
+            )
+        }
+    }
+}
+
+/**
+ * Dialog Brankas Aplikasi Tersembunyi (Hidden Space dengan Verifikasi PIN)
+ */
+@Composable
+fun HiddenAppsVaultDialog(
+    allApps: List<PhoneAppInfo>,
+    hiddenPackages: List<String>,
+    savedPin: String,
+    onUpdatePin: (String) -> Unit,
+    onUnhideApp: (String) -> Unit,
+    onLaunchApp: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pinInput by remember { mutableStateOf("") }
+    var unlocked by remember { mutableStateOf(false) }
+    var newPinMode by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf("") }
+
+    val hiddenApps = remember(allApps, hiddenPackages) {
+        allApps.filter { hiddenPackages.contains(it.packageName) }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF0D1F24))
+                .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.4f), RoundedCornerShape(24.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = if (!unlocked) "Masukkan PIN Brankas" else "Brankas Aplikasi Tersembunyi",
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            if (!unlocked) {
+                Text(
+                    text = "PIN default adalah 1234. Tahan ikon aplikasi mana saja lalu pilih 'Sembunyikan' untuk memasukkannya ke sini.",
+                    color = Color.White.copy(0.7f),
+                    fontSize = 12.sp
+                )
+                OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = {
+                        if (it.length <= 4) {
+                            pinInput = it
+                            errorMsg = ""
+                            if (it == savedPin) {
+                                unlocked = true
+                            } else if (it.length == 4) {
+                                errorMsg = "PIN salah!"
+                            }
+                        }
+                    },
+                    placeholder = { Text("4 Digit PIN", color = Color.White.copy(0.5f)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF6EE7B7)
+                    )
+                )
+                if (errorMsg.isNotEmpty()) {
+                    Text(errorMsg, color = Color(0xFFF87171), fontSize = 12.sp)
+                }
+            } else {
+                if (newPinMode) {
+                    var nextPin by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = nextPin,
+                        onValueChange = { if (it.length <= 4) nextPin = it },
+                        placeholder = { Text("PIN Baru (4 angka)", color = Color.White.copy(0.5f)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                    )
+                    Button(
+                        onClick = {
+                            if (nextPin.length == 4) {
+                                onUpdatePin(nextPin)
+                                newPinMode = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Simpan PIN Baru")
+                    }
+                } else {
+                    Text(
+                        text = "Ubah PIN Brankas",
+                        color = Color(0xFFFDE68A),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { newPinMode = true }
+                    )
+                }
+
+                if (hiddenApps.isEmpty()) {
+                    Text(
+                        text = "Belum ada aplikasi yang disembunyikan.",
+                        color = Color.White.copy(0.6f),
+                        fontSize = 13.sp
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 260.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(hiddenApps, key = { it.packageName }) { app ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .clickable { onLaunchApp(app.packageName) }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    UnifiedLauncherAppIcon(app = app, size = 40.dp)
+                                    Text(app.label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    text = "Tampilkan",
+                                    color = Color(0xFF6EE7B7),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF6EE7B7).copy(alpha = 0.2f))
+                                        .clickable { onUnhideApp(app.packageName) }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1127,15 +2027,11 @@ fun UnifiedLauncherAppIcon(
 @Composable
 fun PhoneTopHeader(
     isDefaultHome: Boolean,
-    isLockEnabled: Boolean,
-    currentTheme: AmbientTheme,
     currentRobot: RobotType,
+    onOpenLauncherSettings: () -> Unit,
     onOpenRobotPicker: () -> Unit,
-    onCycleTheme: () -> Unit,
-    onToggleLockScreen: () -> Unit,
     onRequestDefaultHome: () -> Unit
 ) {
-    val context = LocalContext.current
     var currentTime by remember { mutableStateOf("") }
     var currentDate by remember { mutableStateOf("") }
 
@@ -1150,37 +2046,38 @@ fun PhoneTopHeader(
         }
     }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(
-                    text = currentTime,
-                    color = Color.White,
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.5).sp
-                )
-                Text(
-                    text = currentDate,
-                    color = Color(0xFFA7F3D0).copy(alpha = 0.85f),
-                    fontSize = 12.sp
-                )
-            }
+        Column {
+            Text(
+                text = currentTime,
+                color = Color.White,
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.5).sp
+            )
+            Text(
+                text = currentDate,
+                color = Color(0xFFA7F3D0).copy(alpha = 0.85f),
+                fontSize = 12.sp
+            )
+        }
 
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Tombol Ganti POCO Launcher / Status Default
             Row(
                 modifier = Modifier
                     .clip(CircleShape)
                     .background(
-                        if (isDefaultHome) Color(0xFF10B981).copy(alpha = 0.28f)
+                        if (isDefaultHome) Color(0xFF10B981).copy(alpha = 0.26f)
                         else Color(0xFFF59E0B).copy(alpha = 0.28f)
                     )
                     .border(
@@ -1189,18 +2086,18 @@ fun PhoneTopHeader(
                         CircleShape
                     )
                     .combinedClickable(onClick = onRequestDefaultHome)
-                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                    .padding(horizontal = 11.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Icon(
                     imageVector = if (isDefaultHome) Icons.Rounded.CheckCircle else Icons.Rounded.Home,
                     contentDescription = null,
                     tint = if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24),
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(14.dp)
                 )
                 Text(
-                    text = if (isDefaultHome) "Home Default" else "Jadikan Default",
+                    text = if (isDefaultHome) "Default" else "Ganti POCO",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -1208,72 +2105,33 @@ fun PhoneTopHeader(
                     softWrap = false
                 )
             }
-        }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SmallGlassButton(
-                icon = Icons.Rounded.Person,
-                label = currentRobot.title,
-                tint = currentRobot.accent,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenRobotPicker
-            )
-            SmallGlassButton(
-                icon = Icons.Rounded.Lock,
-                label = "Lock",
-                tint = if (isLockEnabled) Color(0xFF6EE7B7) else Color.White.copy(0.6f),
-                onClick = onToggleLockScreen
-            )
-            SmallGlassButton(
-                icon = Icons.Rounded.Star,
-                label = currentTheme.title,
-                tint = Color(0xFF6EE7B7),
-                onClick = onCycleTheme
-            )
-            SmallGlassButton(
-                icon = Icons.Rounded.Settings,
-                label = "",
-                tint = Color.White,
-                onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun SmallGlassButton(
-    icon: ImageVector,
-    label: String,
-    tint: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(Color(0xFF0E292B).copy(alpha = 0.65f))
-            .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.30f), CircleShape)
-            .combinedClickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
-        if (label.isNotEmpty()) {
-            Text(
-                text = label,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Tombol Setelan Launcher Penuh
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color(0xFF0E292B).copy(alpha = 0.82f))
+                    .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.45f), CircleShape)
+                    .combinedClickable(onClick = onOpenLauncherSettings)
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Settings,
+                    contentDescription = "Setelan Launcher",
+                    tint = Color(0xFF6EE7B7),
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = "Setelan",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
         }
     }
 }
@@ -1347,7 +2205,7 @@ fun RobotCompanionStage(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Tarik atas: Notifikasi • Tap foto: Ganti karakter",
+                    text = "Tarik atas: Laci Aplikasi • Tarik bawah: Notifikasi",
                     color = Color(0xFFA7F3D0).copy(alpha = 0.8f),
                     fontSize = 10.sp
                 )
@@ -1369,7 +2227,7 @@ fun RobotCompanionStage(
                     lookX = lookX,
                     lookY = 0.35f,
                     stepTrigger = stepTrigger,
-                    modifier = Modifier.size(80.dp)
+                    modifier = Modifier.size(78.dp)
                 )
                 Text(
                     text = robotType.title,
@@ -1429,6 +2287,7 @@ fun PhonePlayingCardItem(
     isSelected: Boolean,
     distanceFromCenter: Int,
     isPinned: Boolean,
+    showLabel: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -1439,7 +2298,7 @@ fun PhonePlayingCardItem(
     val rankLabel = if (isPinned) "A" else ranks[index % ranks.size]
 
     val liftOffsetY by animateFloatAsState(
-        targetValue = if (isSelected) -26f else (abs(distanceFromCenter).coerceAtMost(3) * 10f),
+        targetValue = if (isSelected) -24f else (abs(distanceFromCenter).coerceAtMost(3) * 10f),
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -1448,7 +2307,7 @@ fun PhonePlayingCardItem(
     )
 
     val cardScale by animateFloatAsState(
-        targetValue = if (isSelected) 1.14f else 0.92f,
+        targetValue = if (isSelected) 1.13f else 0.92f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -1489,8 +2348,8 @@ fun PhonePlayingCardItem(
                 scaleY = cardScale
                 rotationZ = cardRotation
             }
-            .width(170.dp)
-            .height(246.dp)
+            .width(168.dp)
+            .height(238.dp)
             .shadow(
                 elevation = if (isSelected) 28.dp else 8.dp,
                 shape = RoundedCornerShape(22.dp),
@@ -1558,24 +2417,26 @@ fun PhonePlayingCardItem(
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             UnifiedLauncherAppIcon(
                 app = app,
-                size = 84.dp,
+                size = 82.dp,
                 isHighlighted = isSelected
             )
 
-            Text(
-                text = app.label,
-                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.86f),
-                fontSize = 14.sp,
-                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                maxLines = 2,
-                textAlign = TextAlign.Center,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp
-            )
+            if (showLabel) {
+                Text(
+                    text = app.label,
+                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.86f),
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 17.sp
+                )
+            }
         }
 
         Column(
@@ -1740,7 +2601,7 @@ fun InteractiveRobotCanvas(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(70.dp)
+                        .size(68.dp)
                         .shadow(14.dp, CircleShape, ambientColor = ledColor)
                         .clip(CircleShape)
                         .background(Color.White)
@@ -2042,9 +2903,11 @@ fun AppContextDialog(
     app: PhoneAppInfo,
     isPinned: Boolean,
     isDocked: Boolean,
+    isHidden: Boolean,
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
     onToggleDock: () -> Unit,
+    onToggleHide: () -> Unit,
     onAppInfo: () -> Unit,
     onUninstall: () -> Unit
 ) {
@@ -2077,6 +2940,11 @@ fun AppContextDialog(
                 icon = Icons.Rounded.Home,
                 text = if (isDocked) "Hapus dari Dock Bawah" else "Pasang di Dock Bawah",
                 onClick = onToggleDock
+            )
+            ContextMenuRow(
+                icon = Icons.Rounded.Lock,
+                text = if (isHidden) "Keluarkan dari Brankas Tersembunyi" else "Sembunyikan ke Brankas PIN",
+                onClick = onToggleHide
             )
             ContextMenuRow(
                 icon = Icons.Rounded.Info,
@@ -2127,6 +2995,27 @@ fun ContextMenuRow(
 }
 
 // --- HELPER FUNCTIONS ---
+
+fun classifyAppCategory(packageName: String, label: String): AppCategory {
+    val key = "${packageName.lowercase()} ${label.lowercase()}"
+    return when {
+        key.contains("whatsapp") || key.contains("telegram") || key.contains("instagram") ||
+                key.contains("facebook") || key.contains("messenger") || key.contains("discord") ||
+                key.contains("contacts") || key.contains("dialer") || key.contains("phone") ||
+                key.contains("sms") || key.contains("mail") || key.contains("gmail") -> AppCategory.SOCIAL
+
+        key.contains("youtube") || key.contains("tiktok") || key.contains("netflix") ||
+                key.contains("spotify") || key.contains("music") || key.contains("video") ||
+                key.contains("game") || key.contains("disney") || key.contains("vidio") -> AppCategory.MEDIA
+
+        key.contains("bank") || key.contains("bca") || key.contains("bri") || key.contains("mandiri") ||
+                key.contains("bni") || key.contains("bsi") || key.contains("dana") || key.contains("ovo") ||
+                key.contains("gopay") || key.contains("shopee") || key.contains("tokopedia") ||
+                key.contains("lazada") || key.contains("ajaib") -> AppCategory.FINANCE
+
+        else -> AppCategory.TOOLS
+    }
+}
 
 fun checkIsDefaultLauncher(context: Context): Boolean {
     return try {
@@ -2184,7 +3073,8 @@ suspend fun loadPhoneApps(context: Context): List<PhoneAppInfo> = withContext(Di
             label = label,
             packageName = pkg,
             icon = iconBmp.asImageBitmap(),
-            dominantColor = dominant
+            dominantColor = dominant,
+            category = classifyAppCategory(pkg, label)
         )
     }
     appMap.values.sortedBy { it.label.lowercase(Locale.getDefault()) }
