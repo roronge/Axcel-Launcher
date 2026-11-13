@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -77,12 +78,12 @@ class AxcelNotificationListener : NotificationListenerService() {
 
     fun refreshAllNotifications() {
         try {
-            val list = activeNotifications ?: return
+            val sbns: Array<StatusBarNotification> = this.getActiveNotifications() ?: return
             val pm = packageManager
             val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
             val mapped = ArrayList<UnifiedNotifItem>()
 
-            for (sbn in list) {
+            for (sbn in sbns) {
                 if (sbn.packageName == packageName) continue
                 val extras = sbn.notification.extras
                 val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
@@ -96,7 +97,7 @@ class AxcelNotificationListener : NotificationListenerService() {
                 }
                 val appLabel = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: sbn.packageName
                 val rawDrawable = appInfo?.let { pm.getApplicationIcon(it) }
-                    ?: getDrawable(android.R.drawable.sym_def_app_icon)!!
+                    ?: ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon)!!
                 val bmp = drawableToBitmap(rawDrawable)
                 val dominant = extractDominantColor(bmp)
 

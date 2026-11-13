@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -22,7 +22,6 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
-        <!-- Home Launcher Utama -->
         <activity
             android:name=".MainActivity"
             android:clearTaskOnLaunch="true"
@@ -39,7 +38,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Custom Baby Axcel Lock Screen -->
         <activity
             android:name=".LockScreenActivity"
             android:excludeFromRecents="true"
@@ -49,17 +47,11 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
 
-        <!-- Background Service Pemantau Layar Kunci -->
         <service
             android:name=".LockScreenService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="custom_lockscreen_companion" />
-        </service>
+            android:foregroundServiceType="dataSync" />
 
-        <!-- Notification Listener untuk Menyeragamkan Semua Notifikasi & Ikonnya -->
         <service
             android:name=".AxcelNotificationListener"
             android:exported="true"
