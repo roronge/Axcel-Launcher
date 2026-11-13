@@ -45,7 +45,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -62,6 +61,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -77,6 +77,8 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 data class PhoneAppInfo(
     val label: String,
@@ -85,11 +87,11 @@ data class PhoneAppInfo(
     val dominantColor: Color
 )
 
-enum class AmbientTheme(val title: String, val primary: Color) {
-    DYNAMIC("Adaptive", Color(0xFF2563EB)),
-    MINT_BABY("Mint Pastel", Color(0xFF10B981)),
-    ROYAL_FELT("Emerald", Color(0xFF059669)),
-    MIDNIGHT("Midnight", Color(0xFF334155))
+enum class AmbientTheme(val title: String, val topColor: Color, val midColor: Color, val bottomColor: Color) {
+    BABY_MINT("Baby Mint", Color(0xFF134E4A), Color(0xFF0A1F24), Color(0xFF050A0E)),
+    DYNAMIC("Adaptive", Color(0xFF1E3A8A), Color(0xFF0A0F1C), Color(0xFF05070B)),
+    ROYAL_FELT("Emerald", Color(0xFF065F46), Color(0xFF071917), Color(0xFF040A09)),
+    MIDNIGHT("Starlight", Color(0xFF312E81), Color(0xFF0F1024), Color(0xFF05060E))
 }
 
 enum class RobotType(val title: String, val subtitle: String, val accent: Color) {
@@ -132,10 +134,11 @@ fun AxcelPhoneLauncherScreen() {
     var dockPackages by remember {
         mutableStateOf(prefs.getStringSet("dock_apps", emptySet())?.toList() ?: emptyList())
     }
+    // Tema default langsung BABY_MINT agar serasi dengan Baby Axcel
     var selectedTheme by remember {
         mutableStateOf(
-            AmbientTheme.entries.find { it.name == prefs.getString("ambient_theme", "DYNAMIC") }
-                ?: AmbientTheme.DYNAMIC
+            AmbientTheme.entries.find { it.name == prefs.getString("ambient_theme", "BABY_MINT") }
+                ?: AmbientTheme.BABY_MINT
         )
     }
     var selectedRobot by remember {
@@ -153,7 +156,6 @@ fun AxcelPhoneLauncherScreen() {
     var showRobotPicker by remember { mutableStateOf(false) }
     var cuteReactionBurst by remember { mutableIntStateOf(0) }
 
-    // Cek ulang status Default Home setiap kali user kembali dari menu Setelan Android
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -259,38 +261,45 @@ fun AxcelPhoneLauncherScreen() {
         }
     }
 
-    val targetGlowColor = when (selectedTheme) {
-        AmbientTheme.DYNAMIC -> activeCardApp?.dominantColor ?: Color(0xFF10B981)
-        else -> selectedTheme.primary
+    val targetTopColor = when (selectedTheme) {
+        AmbientTheme.DYNAMIC -> activeCardApp?.dominantColor ?: Color(0xFF134E4A)
+        else -> selectedTheme.topColor
     }
 
-    val animatedGlowColor by animateColorAsState(
-        targetValue = targetGlowColor,
+    val animatedTopColor by animateColorAsState(
+        targetValue = targetTopColor,
         animationSpec = tween(550),
-        label = "bgGlow"
+        label = "bgTopColor"
     )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF06080E))
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        animatedGlowColor.copy(alpha = 0.45f),
-                        Color(0xFF0A0F1C).copy(alpha = 0.92f),
-                        Color(0xFF05070B)
+                        animatedTopColor.copy(alpha = 0.78f),
+                        selectedTheme.midColor,
+                        selectedTheme.bottomColor
                     )
                 )
             )
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
+        // BACKGROUND KHUSUS BABY AXCEL: Bintang Berkelip, Gelembung Mint Bokeh, & Awan Pastel Lembut
+        BabyAxcelAmbientBackground(
+            accentMint = Color(0xFF6EE7B7),
+            warmStar = Color(0xFFFDE68A),
+            modifier = Modifier.fillMaxSize()
+        )
+
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. HEADER SMARTPHONE (2 Baris Rapi & Tombol Default Proporsional)
+            // 1. HEADER SMARTPHONE
             PhoneTopHeader(
                 isDefaultHome = isDefaultHome,
                 currentTheme = selectedTheme,
@@ -304,7 +313,7 @@ fun AxcelPhoneLauncherScreen() {
                 onRequestDefaultHome = { openDefaultLauncherSettings(context) }
             )
 
-            // 2. PANGGUNG BABY AXCEL & ROBOT PENDAMPING + INFO KARTU AKTIF
+            // 2. PANGGUNG BABY AXCEL & INFO KARTU AKTIF
             RobotCompanionStage(
                 app = activeCardApp,
                 cardNumber = if (filteredApps.isEmpty()) 0 else safeCenterIndex + 1,
@@ -343,7 +352,7 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 4. KIPAS JAJARAN KARTU REMI
+            // 4. KIPAS JAJARAN KARTU REMI DENGAN IKON APLIKASI SERAGAM
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -382,7 +391,7 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 5. SEARCH BAR & BOTTOM GLASS DOCK
+            // 5. SEARCH BAR & BOTTOM GLASS DOCK (IKON SERAGAM)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -395,7 +404,7 @@ fun AxcelPhoneLauncherScreen() {
                     placeholder = {
                         Text(
                             "Cari kartu aplikasi...",
-                            color = Color.White.copy(alpha = 0.5f),
+                            color = Color.White.copy(alpha = 0.55f),
                             fontSize = 13.sp
                         )
                     },
@@ -403,7 +412,7 @@ fun AxcelPhoneLauncherScreen() {
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.7f),
+                            tint = Color(0xFF6EE7B7),
                             modifier = Modifier.size(18.dp)
                         )
                     },
@@ -427,10 +436,10 @@ fun AxcelPhoneLauncherScreen() {
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color.White.copy(alpha = 0.6f),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
-                        focusedContainerColor = Color.White.copy(alpha = 0.12f),
-                        unfocusedContainerColor = Color.White.copy(alpha = 0.07f)
+                        focusedBorderColor = Color(0xFF6EE7B7),
+                        unfocusedBorderColor = Color(0xFF6EE7B7).copy(alpha = 0.30f),
+                        focusedContainerColor = Color(0xFF0D2426).copy(alpha = 0.75f),
+                        unfocusedContainerColor = Color(0xFF0A1B1E).copy(alpha = 0.65f)
                     )
                 )
 
@@ -439,8 +448,8 @@ fun AxcelPhoneLauncherScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(26.dp))
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(26.dp))
+                            .background(Color(0xFF0E292B).copy(alpha = 0.68f))
+                            .border(1.2.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), RoundedCornerShape(26.dp))
                             .padding(horizontal = 16.dp, vertical = 9.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
@@ -510,6 +519,174 @@ fun AxcelPhoneLauncherScreen() {
     }
 }
 
+/**
+ * Latar belakang tema khusus Baby Axcel:
+ * Gelembung cahaya mint lembut, bintang emas berkelip, dan gelombang awan pastel.
+ */
+@Composable
+fun BabyAxcelAmbientBackground(
+    accentMint: Color,
+    warmStar: Color,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "nurseryBg")
+    val driftPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 6.28318f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(14000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "drift"
+    )
+    val twinkle by infiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "twinkle"
+    )
+
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+
+        // 1. Gelembung Bokeh Mint & Emas Lembut Melayang
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(accentMint.copy(alpha = 0.22f), Color.Transparent)
+            ),
+            radius = w * 0.45f,
+            center = Offset(w * 0.82f + cos(driftPhase) * 28f, h * 0.18f + sin(driftPhase) * 22f)
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(warmStar.copy(alpha = 0.14f), Color.Transparent)
+            ),
+            radius = w * 0.38f,
+            center = Offset(w * 0.18f + sin(driftPhase) * 24f, h * 0.46f + cos(driftPhase) * 18f)
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(accentMint.copy(alpha = 0.18f), Color.Transparent)
+            ),
+            radius = w * 0.50f,
+            center = Offset(w * 0.5f, h * 0.88f)
+        )
+
+        // 2. Bintang-bintang Kecil Berkelip di Langit Malam
+        val starCoords = listOf(
+            Offset(w * 0.12f, h * 0.14f),
+            Offset(w * 0.34f, h * 0.09f),
+            Offset(w * 0.68f, h * 0.12f),
+            Offset(w * 0.88f, h * 0.26f),
+            Offset(w * 0.15f, h * 0.36f),
+            Offset(w * 0.84f, h * 0.42f),
+            Offset(w * 0.24f, h * 0.72f),
+            Offset(w * 0.78f, h * 0.75f)
+        )
+        starCoords.forEachIndexed { idx, pt ->
+            val alphaVal = if (idx % 2 == 0) twinkle else (1.15f - twinkle).coerceIn(0.2f, 0.95f)
+            val color = if (idx % 3 == 0) warmStar else accentMint
+            drawCircle(
+                color = color.copy(alpha = alphaVal),
+                radius = if (idx % 2 == 0) 3.2f else 2.2f,
+                center = pt
+            )
+        }
+
+        // 3. Siluet Awan Pastel Transparan di Bagian Bawah
+        val cloudPath = Path().apply {
+            moveTo(0f, h * 0.86f)
+            quadraticBezierTo(w * 0.25f, h * 0.81f, w * 0.52f, h * 0.85f)
+            quadraticBezierTo(w * 0.78f, h * 0.89f, w, h * 0.83f)
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(
+            path = cloudPath,
+            brush = Brush.verticalGradient(
+                listOf(accentMint.copy(alpha = 0.08f), Color.Transparent)
+            )
+        )
+    }
+}
+
+/**
+ * Komponen Penyeragam Ikon Aplikasi (Unified Launcher Icon Badge):
+ * Membungkus setiap ikon aplikasi terinstal ke dalam medali Squircle 3D seragam
+ * dengan bingkai Mint-Gold, latar gradien harmonis, dan pantulan kaca.
+ */
+@Composable
+fun UnifiedLauncherAppIcon(
+    app: PhoneAppInfo,
+    size: Dp,
+    isHighlighted: Boolean = false
+) {
+    val corner = size * 0.27f
+    Box(
+        modifier = Modifier
+            .size(size)
+            .shadow(
+                elevation = if (isHighlighted) 16.dp else 6.dp,
+                shape = RoundedCornerShape(corner),
+                ambientColor = Color(0xFF6EE7B7),
+                spotColor = if (isHighlighted) Color(0xFFFDE68A) else Color.Black
+            )
+            .clip(RoundedCornerShape(corner))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF17383A),
+                        app.dominantColor.copy(alpha = 0.45f),
+                        Color(0xFF0C1A1D)
+                    )
+                )
+            )
+            .border(
+                width = if (isHighlighted) 2.dp else 1.3.dp,
+                brush = Brush.linearGradient(
+                    colors = if (isHighlighted) {
+                        listOf(Color(0xFFFDE68A), Color(0xFF6EE7B7), Color.White)
+                    } else {
+                        listOf(Color(0xFF6EE7B7).copy(alpha = 0.65f), Color.White.copy(alpha = 0.25f))
+                    }
+                ),
+                shape = RoundedCornerShape(corner)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        // Ikon asli dipotong seragam di dalam medali squircle
+        Image(
+            bitmap = app.icon,
+            contentDescription = app.label,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(size * 0.08f)
+                .clip(RoundedCornerShape(corner * 0.85f))
+        )
+
+        // Lapisan kilau kaca seragam di bagian atas ikon
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isHighlighted) 0.28f else 0.16f),
+                            Color.Transparent,
+                            Color(0xFF042F2E).copy(alpha = 0.18f)
+                        )
+                    )
+                )
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhoneTopHeader(
@@ -545,7 +722,6 @@ fun PhoneTopHeader(
             .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Baris 1: Jam & Tanggal di Kiri + Tombol Jadikan Default yang Rapi di Kanan
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -561,22 +737,21 @@ fun PhoneTopHeader(
                 )
                 Text(
                     text = "$currentDate • $networkLabel • $batteryPct%",
-                    color = Color.White.copy(alpha = 0.68f),
+                    color = Color(0xFFA7F3D0).copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
             }
 
-            // Tombol Pill Horizontal yang Proporsional (Anti-Terpotong)
             Row(
                 modifier = Modifier
                     .clip(CircleShape)
                     .background(
-                        if (isDefaultHome) Color(0xFF10B981).copy(alpha = 0.24f)
-                        else Color(0xFFF59E0B).copy(alpha = 0.26f)
+                        if (isDefaultHome) Color(0xFF10B981).copy(alpha = 0.28f)
+                        else Color(0xFFF59E0B).copy(alpha = 0.28f)
                     )
                     .border(
                         1.dp,
-                        if (isDefaultHome) Color(0xFF34D399) else Color(0xFFFBBF24),
+                        if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24),
                         CircleShape
                     )
                     .combinedClickable(onClick = onRequestDefaultHome)
@@ -587,7 +762,7 @@ fun PhoneTopHeader(
                 Icon(
                     imageVector = if (isDefaultHome) Icons.Rounded.CheckCircle else Icons.Rounded.Home,
                     contentDescription = null,
-                    tint = if (isDefaultHome) Color(0xFF34D399) else Color(0xFFFBBF24),
+                    tint = if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24),
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
@@ -601,7 +776,6 @@ fun PhoneTopHeader(
             }
         }
 
-        // Baris 2: Tombol Karakter, Tema, & Setelan HP dalam 1 Baris Lega
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -617,7 +791,7 @@ fun PhoneTopHeader(
             SmallGlassButton(
                 icon = Icons.Rounded.Palette,
                 label = currentTheme.title,
-                tint = Color.White,
+                tint = Color(0xFF6EE7B7),
                 onClick = onCycleTheme
             )
             SmallGlassButton(
@@ -642,8 +816,8 @@ fun SmallGlassButton(
     Row(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.11f))
-            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .background(Color(0xFF0E292B).copy(alpha = 0.65f))
+            .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.30f), CircleShape)
             .combinedClickable(onClick = onClick)
             .padding(horizontal = if (label.isEmpty()) 11.dp else 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -686,12 +860,12 @@ fun RobotCompanionStage(
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(
-                        (app?.dominantColor ?: Color(0xFF10B981)).copy(alpha = 0.52f),
-                        Color(0xFF111625).copy(alpha = 0.88f)
+                        Color(0xFF0F3D3E).copy(alpha = 0.78f),
+                        Color(0xFF0D1F26).copy(alpha = 0.90f)
                     )
                 )
             )
-            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+            .border(1.2.dp, Color(0xFF6EE7B7).copy(alpha = 0.38f), RoundedCornerShape(24.dp))
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Row(
@@ -733,8 +907,8 @@ fun RobotCompanionStage(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Geser kartu • Tap buka • Tap foto ganti karakter",
-                    color = Color.White.copy(alpha = 0.65f),
+                    text = "Geser kartu • Tap buka • Tap Baby Axcel ganti karakter",
+                    color = Color(0xFFA7F3D0).copy(alpha = 0.8f),
                     fontSize = 11.sp
                 )
             }
@@ -743,15 +917,15 @@ fun RobotCompanionStage(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(20.dp))
+                    .background(Color(0xFF6EE7B7).copy(alpha = 0.14f))
+                    .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.42f), RoundedCornerShape(20.dp))
                     .combinedClickable(onClick = onRobotClick)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 InteractiveRobotCanvas(
                     robotType = robotType,
                     customPhoto = customPhoto,
-                    accentColor = app?.dominantColor ?: robotType.accent,
+                    accentColor = Color(0xFF6EE7B7),
                     lookX = lookX,
                     lookY = 0.35f,
                     stepTrigger = stepTrigger,
@@ -759,7 +933,7 @@ fun RobotCompanionStage(
                 )
                 Text(
                     text = robotType.title,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = Color.White,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -781,10 +955,10 @@ fun SuitFilterChip(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color.White else Color.White.copy(alpha = 0.08f))
+            .background(if (selected) Color(0xFFA7F3D0) else Color(0xFF0E292B).copy(alpha = 0.65f))
             .border(
                 1.dp,
-                if (selected) Color.White else Color.White.copy(alpha = 0.14f),
+                if (selected) Color.White else Color(0xFF6EE7B7).copy(alpha = 0.25f),
                 RoundedCornerShape(14.dp)
             )
             .combinedClickable(onClick = onClick)
@@ -792,15 +966,15 @@ fun SuitFilterChip(
     ) {
         Text(
             text = suit,
-            color = if (selected) Color(0xFFE11D48) else Color(0xFFFDE68A),
+            color = if (selected) Color(0xFF064E3B) else Color(0xFFFDE68A),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
         Text(
             text = label,
-            color = if (selected) Color.Black else Color.White.copy(alpha = 0.85f),
+            color = if (selected) Color(0xFF022C22) else Color.White.copy(alpha = 0.88f),
             fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -880,22 +1054,22 @@ fun PhonePlayingCardItem(
             .shadow(
                 elevation = if (isSelected) 28.dp else 8.dp,
                 shape = RoundedCornerShape(22.dp),
-                ambientColor = if (isSelected) Color(0xFFFBBF24) else Color.Black,
-                spotColor = if (isSelected) Color.White else Color.Black
+                ambientColor = if (isSelected) Color(0xFF6EE7B7) else Color.Black,
+                spotColor = if (isSelected) Color(0xFFFDE68A) else Color.Black
             )
             .clip(RoundedCornerShape(22.dp))
             .background(
                 Brush.verticalGradient(
                     colors = if (isSelected) {
                         listOf(
-                            Color(0xFF1E293B),
-                            app.dominantColor.copy(alpha = 0.88f),
-                            Color(0xFF0F172A)
+                            Color(0xFF134E4A),
+                            Color(0xFF0F292E),
+                            Color(0xFF091519)
                         )
                     } else {
                         listOf(
-                            Color(0xFF161E31),
-                            Color(0xFF0D121E)
+                            Color(0xFF0F2428),
+                            Color(0xFF091316)
                         )
                     }
                 )
@@ -905,11 +1079,11 @@ fun PhonePlayingCardItem(
                     BorderStroke(
                         3.dp,
                         Brush.linearGradient(
-                            listOf(Color(0xFFFDE68A), Color.White, Color(0xFFF59E0B))
+                            listOf(Color(0xFFFDE68A), Color(0xFF6EE7B7), Color.White)
                         )
                     )
                 } else {
-                    BorderStroke(1.2.dp, Color.White.copy(alpha = 0.22f))
+                    BorderStroke(1.2.dp, Color(0xFF6EE7B7).copy(alpha = 0.28f))
                 },
                 shape = RoundedCornerShape(22.dp)
             )
@@ -925,19 +1099,20 @@ fun PhonePlayingCardItem(
         ) {
             Text(
                 text = rankLabel,
-                color = if (isSelected) Color(0xFFFDE68A) else Color.White.copy(alpha = 0.85f),
+                color = if (isSelected) Color(0xFFFDE68A) else Color(0xFFA7F3D0),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 16.sp
             )
             Text(
                 text = suitSymbol,
-                color = if (isRedSuit) Color(0xFFF87171) else Color(0xFF93C5FD),
+                color = if (isRedSuit) Color(0xFFF87171) else Color(0xFF6EE7B7),
                 fontSize = 16.sp,
                 lineHeight = 16.sp
             )
         }
 
+        // Bagian Tengah: Ikon Aplikasi Seragam (Unified Squircle Medal) + Nama
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -946,31 +1121,15 @@ fun PhonePlayingCardItem(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(86.dp)
-                    .shadow(if (isSelected) 16.dp else 4.dp, RoundedCornerShape(22.dp))
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(app.dominantColor.copy(alpha = 0.35f))
-                    .border(
-                        1.5.dp,
-                        if (isSelected) Color.White.copy(alpha = 0.75f) else Color.White.copy(alpha = 0.16f),
-                        RoundedCornerShape(22.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    bitmap = app.icon,
-                    contentDescription = app.label,
-                    modifier = Modifier
-                        .size(70.dp)
-                        .clip(RoundedCornerShape(17.dp))
-                )
-            }
+            UnifiedLauncherAppIcon(
+                app = app,
+                size = 86.dp,
+                isHighlighted = isSelected
+            )
 
             Text(
                 text = app.label,
-                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.82f),
+                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.86f),
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
                 maxLines = 2,
@@ -988,14 +1147,14 @@ fun PhonePlayingCardItem(
         ) {
             Text(
                 text = rankLabel,
-                color = if (isSelected) Color(0xFFFDE68A) else Color.White.copy(alpha = 0.85f),
+                color = if (isSelected) Color(0xFFFDE68A) else Color(0xFFA7F3D0),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 16.sp
             )
             Text(
                 text = suitSymbol,
-                color = if (isRedSuit) Color(0xFFF87171) else Color(0xFF93C5FD),
+                color = if (isRedSuit) Color(0xFFF87171) else Color(0xFF6EE7B7),
                 fontSize = 16.sp,
                 lineHeight = 16.sp
             )
@@ -1008,7 +1167,7 @@ fun PhonePlayingCardItem(
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.24f),
+                                Color(0xFF6EE7B7).copy(alpha = 0.18f),
                                 Color.Transparent,
                                 Color(0xFFFDE68A).copy(alpha = 0.12f)
                             )
@@ -1031,15 +1190,13 @@ fun DockAppIcon(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(4.dp)
+            .padding(2.dp)
     ) {
-        Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
-            modifier = Modifier
-                .size(50.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(14.dp))
+        // Ikon Dock bawah juga memakai bingkai seragam UnifiedLauncherAppIcon
+        UnifiedLauncherAppIcon(
+            app = app,
+            size = 52.dp,
+            isHighlighted = false
         )
     }
 }
@@ -1133,7 +1290,6 @@ fun InteractiveRobotCanvas(
     )
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        // Default: Foto Asli Si Kecil dalam Kapsul Astronot Berkilau + Animasi Menggemaskan
         if (robotType == RobotType.BABY_PHOTO) {
             Box(
                 modifier = Modifier
@@ -1154,7 +1310,7 @@ fun InteractiveRobotCanvas(
                         .background(Color.White)
                         .border(
                             3.dp,
-                            Brush.linearGradient(listOf(Color(0xFF6EE7B7), Color.White, ledColor)),
+                            Brush.linearGradient(listOf(Color(0xFF6EE7B7), Color(0xFFFDE68A), Color.White)),
                             CircleShape
                         )
                 ) {
@@ -1201,7 +1357,6 @@ fun InteractiveRobotCanvas(
             }
 
             if (robotType == RobotType.BABY_PHOTO) {
-                // Telinga antena astronot mint + mahkota bintang menggemaskan di atas foto
                 rotate(degrees = cuteHeadSway + smoothLookX * 12f, pivot = Offset(cx, cy)) {
                     drawCircle(Color(0xFF6EE7B7), 6.5f, Offset(cx - 31f, cy - 16f))
                     drawCircle(Color(0xFF6EE7B7), 6.5f, Offset(cx + 31f, cy - 16f))
@@ -1377,8 +1532,8 @@ fun RobotPickerDialog(
                 .fillMaxWidth()
                 .heightIn(max = 520.dp)
                 .clip(RoundedCornerShape(26.dp))
-                .background(Color(0xFF111622))
-                .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(26.dp))
+                .background(Color(0xFF0D1F24))
+                .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), RoundedCornerShape(26.dp))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -1462,17 +1617,13 @@ fun AppContextDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF141925))
-                .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(24.dp))
+                .background(Color(0xFF0D1F24))
+                .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), RoundedCornerShape(24.dp))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Image(
-                    bitmap = app.icon,
-                    contentDescription = app.label,
-                    modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))
-                )
+                UnifiedLauncherAppIcon(app = app, size = 48.dp, isHighlighted = true)
                 Column {
                     Text(app.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Text(app.packageName, color = Color.White.copy(0.55f), fontSize = 11.sp, maxLines = 1)
