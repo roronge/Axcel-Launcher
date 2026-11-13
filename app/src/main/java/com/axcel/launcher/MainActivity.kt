@@ -522,6 +522,12 @@ fun PhoneTopHeader(
                 onClick = onCycleTheme
             )
             SmallGlassButton(
+                icon = Icons.Rounded.Home,
+                label = "Default",
+                tint = Color(0xFFFBBF24),
+                onClick = { openDefaultLauncherSettings(context) }
+            )
+            SmallGlassButton(
                 icon = Icons.Rounded.Settings,
                 label = "",
                 tint = Color.White,
@@ -1416,4 +1422,29 @@ fun uninstallApp(context: Context, packageName: String) {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     context.startActivity(intent)
+}
+fun openDefaultLauncherSettings(context: Context) {
+    try {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(Context.ROLE_SERVICE) as android.app.role.RoleManager
+            if (roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) &&
+                !roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)
+            ) {
+                val intent = roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
+                if (context is android.app.Activity) {
+                    context.startActivityForResult(intent, 1001)
+                    return
+                }
+            }
+        }
+        val homeSettings = Intent(Settings.ACTION_HOME_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(homeSettings)
+    } catch (e: Exception) {
+        val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(fallback)
+    }
 }
