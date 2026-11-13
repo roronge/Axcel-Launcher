@@ -1320,7 +1320,7 @@ private fun DrawScope.drawBabyAxcelCute(
     // 8. Mulut Mungil Tersenyum Manis
     val mouthPath = Path().apply {
         moveTo(cx - 4.5f + ex * 0.5f, cy + h * 0.01f)
-        quadraticTo(cx + ex * 0.5f, cy + h * 0.045f, cx + 4.5f + ex * 0.5f, cy + h * 0.01f)
+        quadraticBezierTo(cx + ex * 0.5f, cy + h * 0.045f, cx + 4.5f + ex * 0.5f, cy + h * 0.01f)
     }
     drawPath(
         mouthPath,
@@ -1499,7 +1499,7 @@ fun RobotPickerDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Rounded.AddPhotoAlternate, contentDescription = null, tint = Color(0xFF6EE7B7))
+                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Color(0xFF6EE7B7))
                 Column {
                     Text("Gunakan Foto Asli dari Galeri", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text("Pasang foto si kecil ke dalam bingkai astronot lucu", color = Color.White.copy(0.7f), fontSize = 11.sp)
