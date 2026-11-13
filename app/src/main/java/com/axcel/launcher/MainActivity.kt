@@ -1,10 +1,9 @@
 package com.axcel.launcher
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
@@ -12,11 +11,14 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -27,7 +29,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -49,6 +53,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -61,9 +66,13 @@ import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 data class PhoneAppInfo(
     val label: String,
@@ -74,17 +83,18 @@ data class PhoneAppInfo(
 
 enum class AmbientTheme(val title: String, val primary: Color) {
     DYNAMIC("Adaptive", Color(0xFF2563EB)),
+    MINT_BABY("Mint Pastel", Color(0xFF10B981)),
     ROYAL_FELT("Emerald", Color(0xFF059669)),
-    MIDNIGHT("Midnight", Color(0xFF334155)),
-    CRIMSON("Crimson", Color(0xFFE11D48))
+    MIDNIGHT("Midnight", Color(0xFF334155))
 }
 
 enum class RobotType(val title: String, val subtitle: String, val accent: Color) {
+    BABY_AXCEL("Baby Axcel", "Chibi Mecha Mint (Default)", Color(0xFF6EE7B7)),
+    CUSTOM_PHOTO("Foto Galeri", "Avatar Foto Pilihanmu", Color(0xFFF472B6)),
     ASTRO("Axcel-Bot Astro", "Companion Bot Bulat", Color(0xFF38BDF8)),
     SCORPIO("Scorpio SC-7", "Mecha Kalajengking", Color(0xFFF97316)),
     XGODUCK("XGO-Duck", "Mecha Bebek Servo", Color(0xFFFACC15)),
     CRAWLER("Cyber Crawler", "Laba-Laba 6 Kaki", Color(0xFFA855F7)),
-    TITAN("Mecha Titan", "Guardian Robot", Color(0xFFEF4444)),
     NEKO("Neko-Bot", "Kucing Cyber Neon", Color(0xFFEC4899)),
     DRONE("Orb Drone", "Giroskop Melayang", Color(0xFF10B981))
 }
@@ -124,16 +134,35 @@ fun AxcelPhoneLauncherScreen() {
                 ?: AmbientTheme.DYNAMIC
         )
     }
+    // Default utama langsung BABY_AXCEL
     var selectedRobot by remember {
         mutableStateOf(
-            RobotType.entries.find { it.name == prefs.getString("selected_robot", "ASTRO") }
-                ?: RobotType.ASTRO
+            RobotType.entries.find { it.name == prefs.getString("selected_robot", "BABY_AXCEL") }
+                ?: RobotType.BABY_AXCEL
         )
     }
+    var customPhotoBitmap by remember { mutableStateOf<ImageBitmap?>(loadSavedCustomAvatar(context)) }
+
     var activeFilter by remember { mutableStateOf(DeckFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var contextMenuApp by remember { mutableStateOf<PhoneAppInfo?>(null) }
     var showRobotPicker by remember { mutableStateOf(false) }
+    var cuteReactionBurst by remember { mutableIntStateOf(0) }
+
+    // Pemilih foto dari Galeri HP untuk avatar karakter
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val savedBmp = saveCustomAvatarFromUri(context, uri)
+            if (savedBmp != null) {
+                customPhotoBitmap = savedBmp.asImageBitmap()
+                selectedRobot = RobotType.CUSTOM_PHOTO
+                prefs.edit().putString("selected_robot", RobotType.CUSTOM_PHOTO.name).apply()
+                cuteReactionBurst += 1
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         val loaded = loadPhoneApps(context)
@@ -187,7 +216,6 @@ fun AxcelPhoneLauncherScreen() {
 
     val listState = rememberLazyListState()
 
-    // Deteksi kartu yang berada paling tengah layar saat user menggeser (swipe)
     val centerCardIndex by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
@@ -205,7 +233,6 @@ fun AxcelPhoneLauncherScreen() {
     val safeCenterIndex = centerCardIndex.coerceIn(0, (filteredApps.size - 1).coerceAtLeast(0))
     val activeCardApp = filteredApps.getOrNull(safeCenterIndex)
 
-    // Hitung arah geseran & step untuk animasi robot
     val scrollOffsetFraction by remember {
         derivedStateOf {
             val item = listState.layoutInfo.visibleItemsInfo.find { it.index == safeCenterIndex }
@@ -219,7 +246,7 @@ fun AxcelPhoneLauncherScreen() {
     }
 
     val targetGlowColor = when (selectedTheme) {
-        AmbientTheme.DYNAMIC -> activeCardApp?.dominantColor ?: Color(0xFF2563EB)
+        AmbientTheme.DYNAMIC -> activeCardApp?.dominantColor ?: Color(0xFF10B981)
         else -> selectedTheme.primary
     }
 
@@ -249,7 +276,7 @@ fun AxcelPhoneLauncherScreen() {
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. HEADER SMARTPHONE: Jam Besar, Baterai, & Quick Pills
+            // 1. HEADER SMARTPHONE
             PhoneTopHeader(
                 currentTheme = selectedTheme,
                 currentRobot = selectedRobot,
@@ -261,16 +288,20 @@ fun AxcelPhoneLauncherScreen() {
                 }
             )
 
-            // 2. PANGGUNG ROBOT PENDAMPING + INFO KARTU AKTIF
+            // 2. PANGGUNG BABY AXCEL & ROBOT PENDAMPING + INFO KARTU AKTIF
             RobotCompanionStage(
                 app = activeCardApp,
                 cardNumber = if (filteredApps.isEmpty()) 0 else safeCenterIndex + 1,
                 totalCards = filteredApps.size,
                 isPinned = activeCardApp != null && pinnedPackages.contains(activeCardApp.packageName),
                 robotType = selectedRobot,
+                customPhoto = customPhotoBitmap,
                 lookX = scrollOffsetFraction,
-                stepTrigger = safeCenterIndex,
-                onRobotClick = { showRobotPicker = true },
+                stepTrigger = safeCenterIndex + cuteReactionBurst,
+                onRobotClick = {
+                    cuteReactionBurst += 1
+                    showRobotPicker = true
+                },
                 onOpenActiveApp = {
                     activeCardApp?.let { launchPhoneApp(context, it.packageName) }
                 }
@@ -296,7 +327,7 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 4. KIPAS JAJARAN KARTU REMI (SWIPEABLE PLAYING CARD CAROUSEL)
+            // 4. KIPAS JAJARAN KARTU REMI
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -335,7 +366,7 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 5. SEARCH BAR & BOTTOM GLASS DOCK (KHAS SMARTPHONE)
+            // 5. SEARCH BAR & BOTTOM GLASS DOCK
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -387,7 +418,6 @@ fun AxcelPhoneLauncherScreen() {
                     )
                 )
 
-                // Glassmorphic Dock Bawah (4 Aplikasi Utama)
                 if (dockApps.isNotEmpty()) {
                     Row(
                         modifier = Modifier
@@ -411,20 +441,26 @@ fun AxcelPhoneLauncherScreen() {
             }
         }
 
-        // Dialog Pilih Robot
+        // Dialog Pilih Karakter Robot / Baby Axcel / Foto Galeri
         if (showRobotPicker) {
             RobotPickerDialog(
                 selectedRobot = selectedRobot,
+                customPhoto = customPhotoBitmap,
                 onSelect = { robot ->
                     selectedRobot = robot
                     prefs.edit().putString("selected_robot", robot.name).apply()
+                    cuteReactionBurst += 1
                     showRobotPicker = false
+                },
+                onPickGalleryPhoto = {
+                    showRobotPicker = false
+                    photoPickerLauncher.launch("image/*")
                 },
                 onDismiss = { showRobotPicker = false }
             )
         }
 
-        // Dialog Menu Konteks (Tekan Lama Kartu)
+        // Dialog Menu Konteks Aplikasi
         contextMenuApp?.let { targetApp ->
             val isPinned = pinnedPackages.contains(targetApp.packageName)
             val isDocked = dockPackages.contains(targetApp.packageName)
@@ -508,10 +544,10 @@ fun PhoneTopHeader(
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             SmallGlassButton(
-                icon = Icons.Rounded.SmartToy,
-                label = "Robot",
+                icon = Icons.Rounded.ChildCare,
+                label = "Karakter",
                 tint = currentRobot.accent,
                 onClick = onOpenRobotPicker
             )
@@ -526,12 +562,6 @@ fun PhoneTopHeader(
                 label = "Default",
                 tint = Color(0xFFFBBF24),
                 onClick = { openDefaultLauncherSettings(context) }
-            )
-            SmallGlassButton(
-                icon = Icons.Rounded.Settings,
-                label = "",
-                tint = Color.White,
-                onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
             )
         }
     }
@@ -551,13 +581,13 @@ fun SmallGlassButton(
             .background(Color.White.copy(alpha = 0.11f))
             .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
             .combinedClickable(onClick = onClick)
-            .padding(horizontal = if (label.isEmpty()) 10.dp else 12.dp, vertical = 8.dp),
+            .padding(horizontal = if (label.isEmpty()) 9.dp else 11.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(16.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(15.dp))
         if (label.isNotEmpty()) {
-            Text(text = label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(text = label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -570,6 +600,7 @@ fun RobotCompanionStage(
     totalCards: Int,
     isPinned: Boolean,
     robotType: RobotType,
+    customPhoto: ImageBitmap?,
     lookX: Float,
     stepTrigger: Int,
     onRobotClick: () -> Unit,
@@ -583,20 +614,19 @@ fun RobotCompanionStage(
             .background(
                 Brush.horizontalGradient(
                     colors = listOf(
-                        (app?.dominantColor ?: Color(0xFF1E293B)).copy(alpha = 0.52f),
+                        (app?.dominantColor ?: Color(0xFF10B981)).copy(alpha = 0.52f),
                         Color(0xFF111625).copy(alpha = 0.88f)
                     )
                 )
             )
             .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Info Kartu Tengah yang Sedang Terangkat
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -631,35 +661,36 @@ fun RobotCompanionStage(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Geser kartu di bawah • Tap buka • Tahan opsi",
+                    text = "Geser kartu • Tap buka • Tap karakter ganti avatar",
                     color = Color.White.copy(alpha = 0.65f),
                     fontSize = 11.sp
                 )
             }
 
-            // Robot Pendamping Interaktif (Tap untuk ganti jenis robot)
+            // Panggung Karakter Default (Baby Axcel / Foto / Robot)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color.White.copy(alpha = 0.06f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(20.dp))
                     .combinedClickable(onClick = onRobotClick)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 InteractiveRobotCanvas(
                     robotType = robotType,
+                    customPhoto = customPhoto,
                     accentColor = app?.dominantColor ?: robotType.accent,
                     lookX = lookX,
-                    lookY = 0.4f,
+                    lookY = 0.35f,
                     stepTrigger = stepTrigger,
-                    modifier = Modifier.size(78.dp)
+                    modifier = Modifier.size(86.dp)
                 )
                 Text(
                     text = robotType.title,
-                    color = Color.White.copy(alpha = 0.85f),
+                    color = Color.White.copy(alpha = 0.9f),
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -722,7 +753,6 @@ fun PhonePlayingCardItem(
     val ranks = listOf("A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2")
     val rankLabel = if (isPinned) "A" else ranks[index % ranks.size]
 
-    // Efek angkat kartu remi saat berada di tengah layar HP
     val liftOffsetY by animateFloatAsState(
         targetValue = if (isSelected) -28f else (abs(distanceFromCenter).coerceAtMost(3) * 10f),
         animationSpec = spring(
@@ -741,7 +771,6 @@ fun PhonePlayingCardItem(
         label = "cardScale"
     )
 
-    // Efek kipas kartu remi (kiri miring kiri, kanan miring kanan, tengah tegak 0°)
     val targetRotation = when {
         isSelected -> 0f
         distanceFromCenter < 0 -> (distanceFromCenter * 5.5f).coerceAtLeast(-16f)
@@ -819,7 +848,6 @@ fun PhonePlayingCardItem(
             )
             .padding(14.dp)
     ) {
-        // Sudut Kiri Atas Kartu Remi
         Column(
             modifier = Modifier.align(Alignment.TopStart),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -839,7 +867,6 @@ fun PhonePlayingCardItem(
             )
         }
 
-        // Bagian Tengah: Ikon Aplikasi & Nama
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -882,7 +909,6 @@ fun PhonePlayingCardItem(
             )
         }
 
-        // Sudut Kanan Bawah Kartu Remi (Terbalik 180 derajat)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -904,7 +930,6 @@ fun PhonePlayingCardItem(
             )
         }
 
-        // Kilau kartu foil saat disorot
         if (isSelected) {
             Box(
                 modifier = Modifier
@@ -948,27 +973,59 @@ fun DockAppIcon(
     }
 }
 
-// --- 7 ANIMASI ROBOT PROSEDURAL ---
+// --- ANIMASI MENGGEMASKAN BABY AXCEL + 7 ROBOT PROSEDURAL ---
 
 @Composable
 fun InteractiveRobotCanvas(
     robotType: RobotType,
+    customPhoto: ImageBitmap?,
     accentColor: Color,
     lookX: Float,
     lookY: Float,
     stepTrigger: Int,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "robotIdle")
+    val infiniteTransition = rememberInfiniteTransition(label = "cuteIdle")
+
+    // Gerakan napas / melayang lembut
     val idleFloat by infiniteTransition.animateFloat(
-        initialValue = -3.5f,
-        targetValue = 3.5f,
+        initialValue = -4f,
+        targetValue = 4f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1300, easing = FastOutSlowInEasing),
+            animation = tween(1250, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "idleFloat"
     )
+
+    // Miring kepala menggemaskan (seperti pose foto Baby Axcel)
+    val cuteHeadSway by infiniteTransition.animateFloat(
+        initialValue = -7f,
+        targetValue = 7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cuteHeadSway"
+    )
+
+    // Animasi kedip mata otomatis setiap ~3.2 detik
+    val blinkProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 3400
+                0f at 0
+                0f at 3050
+                1f at 3180
+                0f at 3320
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "blink"
+    )
+
     val legSwing by infiniteTransition.animateFloat(
         initialValue = -14f,
         targetValue = 14f,
@@ -979,17 +1036,28 @@ fun InteractiveRobotCanvas(
         label = "legSwing"
     )
 
+    // Loncatan kenyal (jelly bounce) & partikel hati/bintang saat kartu digeser
     var hopState by remember { mutableStateOf(false) }
     LaunchedEffect(stepTrigger) {
         hopState = true
-        delay(150)
+        delay(220)
         hopState = false
     }
 
     val hopOffset by animateFloatAsState(
-        targetValue = if (hopState) -12f else 0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        targetValue = if (hopState) -14f else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium),
         label = "hopOffset"
+    )
+    val squashScaleX by animateFloatAsState(
+        targetValue = if (hopState) 1.12f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
+        label = "squashX"
+    )
+    val squashScaleY by animateFloatAsState(
+        targetValue = if (hopState) 0.90f else 1.0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
+        label = "squashY"
     )
     val strideAngle by animateFloatAsState(
         targetValue = if (stepTrigger % 2 == 0) 18f else -18f,
@@ -1013,30 +1081,252 @@ fun InteractiveRobotCanvas(
         label = "ledColor"
     )
 
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val cx = w / 2f
-        val cy = h / 2f + idleFloat + hopOffset
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        // Jika user memilih Foto Galeri, tampilkan dalam Bingkai Helm Astronot Menggemaskan
+        if (robotType == RobotType.CUSTOM_PHOTO && customPhoto != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationY = idleFloat + hopOffset
+                        rotationZ = cuteHeadSway + smoothLookX * 12f
+                        scaleX = squashScaleX
+                        scaleY = squashScaleY
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                // Lingkaran cahaya astronot
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .shadow(12.dp, CircleShape, ambientColor = ledColor)
+                        .clip(CircleShape)
+                        .background(Color(0xFFD1FAE5))
+                        .border(3.dp, Brush.linearGradient(listOf(Color(0xFF6EE7B7), Color.White, ledColor)), CircleShape)
+                ) {
+                    Image(
+                        bitmap = customPhoto,
+                        contentDescription = "Avatar Foto",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
 
-        drawOval(
-            color = Color.Black.copy(alpha = 0.42f),
-            topLeft = Offset(cx - w * 0.28f, h - 10f),
-            size = Size(w * 0.56f, 8f)
-        )
+        // Canvas menggambar karakter Baby Axcel Chibi / Robot + Partikel Bintang Menggemaskan
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = squashScaleX
+                    scaleY = squashScaleY
+                }
+        ) {
+            val w = size.width
+            val h = size.height
+            val cx = w / 2f
+            val cy = h / 2f + idleFloat + hopOffset
 
-        rotate(degrees = smoothLookX * 10f, pivot = Offset(cx, cy)) {
-            when (robotType) {
-                RobotType.ASTRO -> drawAstroBot(cx, cy, w, h, smoothLookX, smoothLookY, ledColor, hopState)
-                RobotType.SCORPIO -> drawScorpioBot(cx, cy, w, h, smoothLookX, strideAngle, ledColor)
-                RobotType.XGODUCK -> drawXgoDuckBot(cx, cy, w, h, smoothLookX, smoothLookY, strideAngle, ledColor)
-                RobotType.CRAWLER -> drawCrawlerBot(cx, cy, w, h, smoothLookX, legSwing + strideAngle, ledColor)
-                RobotType.TITAN -> drawTitanBot(cx, cy, w, h, smoothLookX, smoothLookY, strideAngle, ledColor)
-                RobotType.NEKO -> drawNekoBot(cx, cy, w, h, smoothLookX, smoothLookY, ledColor, hopState)
-                RobotType.DRONE -> drawDroneBot(cx, cy, w, h, smoothLookX, smoothLookY, legSwing, ledColor)
+            // Bayangan lembut
+            drawOval(
+                color = Color.Black.copy(alpha = 0.35f),
+                topLeft = Offset(cx - w * 0.26f, h - 9f),
+                size = Size(w * 0.52f, 7f)
+            )
+
+            // Partikel bintang & hati melayang saat melompat menggemaskan
+            if (hopState) {
+                drawCuteSparkles(cx, cy, w, h)
+            }
+
+            if (robotType == RobotType.CUSTOM_PHOTO && customPhoto != null) {
+                // Telinga antena lucu di atas foto galeri
+                rotate(degrees = cuteHeadSway + smoothLookX * 12f, pivot = Offset(cx, cy)) {
+                    drawCircle(Color(0xFF6EE7B7), 6f, Offset(cx - 28f, cy - 22f))
+                    drawCircle(Color(0xFF6EE7B7), 6f, Offset(cx + 28f, cy - 22f))
+                    drawCircle(Color(0xFFFDE68A), 4f, Offset(cx, cy - 38f))
+                }
+            } else {
+                val totalTilt = if (robotType == RobotType.BABY_AXCEL) {
+                    cuteHeadSway + smoothLookX * 11f
+                } else {
+                    smoothLookX * 10f
+                }
+
+                rotate(degrees = totalTilt, pivot = Offset(cx, cy)) {
+                    when (robotType) {
+                        RobotType.BABY_AXCEL -> drawBabyAxcelCute(
+                            cx, cy, w, h, smoothLookX, smoothLookY, blinkProgress, hopState, ledColor
+                        )
+                        RobotType.CUSTOM_PHOTO -> drawBabyAxcelCute(
+                            cx, cy, w, h, smoothLookX, smoothLookY, blinkProgress, hopState, ledColor
+                        )
+                        RobotType.ASTRO -> drawAstroBot(cx, cy, w, h, smoothLookX, smoothLookY, ledColor, hopState)
+                        RobotType.SCORPIO -> drawScorpioBot(cx, cy, w, h, smoothLookX, strideAngle, ledColor)
+                        RobotType.XGODUCK -> drawXgoDuckBot(cx, cy, w, h, smoothLookX, smoothLookY, strideAngle, ledColor)
+                        RobotType.CRAWLER -> drawCrawlerBot(cx, cy, w, h, smoothLookX, legSwing + strideAngle, ledColor)
+                        RobotType.NEKO -> drawNekoBot(cx, cy, w, h, smoothLookX, smoothLookY, ledColor, hopState)
+                        RobotType.DRONE -> drawDroneBot(cx, cy, w, h, smoothLookX, smoothLookY, legSwing, ledColor)
+                    }
+                }
             }
         }
     }
+}
+
+private fun DrawScope.drawCuteSparkles(cx: Float, cy: Float, w: Float, h: Float) {
+    // Bintang kuning & hati pink kecil melayang di sekitar kepala
+    drawCircle(Color(0xFFFDE68A), 4.5f, Offset(cx - w * 0.36f, cy - h * 0.28f))
+    drawCircle(Color(0xFFF472B6), 4f, Offset(cx + w * 0.37f, cy - h * 0.24f))
+    drawCircle(Color(0xFF6EE7B7), 3.5f, Offset(cx - w * 0.32f, cy + h * 0.12f))
+    drawCircle(Color(0xFF38BDF8), 3.5f, Offset(cx + w * 0.34f, cy + h * 0.15f))
+}
+
+/**
+ * Karakter Default: Baby Axcel Chibi Mecha
+ * Terinspirasi langsung dari foto si kecil berbaju hijau mint pastel (#A7F3D0),
+ * emblem lebah kecil di dada, pipi chubby merona, dan mata berbinar yang berkedip.
+ */
+private fun DrawScope.drawBabyAxcelCute(
+    cx: Float, cy: Float, w: Float, h: Float,
+    lookX: Float, lookY: Float, blink: Float, excited: Boolean, led: Color
+) {
+    val mintShirt = Color(0xFFA7F3D0)
+    val mintShadow = Color(0xFF6EE7B7)
+    val skinTone = Color(0xFFFFE4D6)
+    val skinShade = Color(0xFFFED7C3)
+    val blushPink = if (excited) Color(0xFFFB7185).copy(alpha = 0.65f) else Color(0xFFF472B6).copy(alpha = 0.42f)
+
+    // 1. Aura Helm Astronot Transparan Lucu di Belakang
+    drawCircle(
+        color = led.copy(alpha = 0.18f),
+        radius = w * 0.41f,
+        center = Offset(cx, cy - 2f)
+    )
+    drawCircle(
+        color = Color.White.copy(alpha = 0.35f),
+        radius = w * 0.41f,
+        center = Offset(cx, cy - 2f),
+        style = Stroke(width = 2f)
+    )
+
+    // 2. Baju Hijau Mint Pastel (seperti di foto)
+    drawRoundRect(
+        brush = Brush.verticalGradient(listOf(mintShirt, mintShadow)),
+        topLeft = Offset(cx - w * 0.26f, cy + h * 0.08f),
+        size = Size(w * 0.52f, h * 0.26f),
+        cornerRadius = CornerRadius(24f, 24f)
+    )
+    // Kerah V lembut
+    val collarPath = Path().apply {
+        moveTo(cx - 8f, cy + h * 0.08f)
+        lineTo(cx, cy + h * 0.18f)
+        lineTo(cx + 8f, cy + h * 0.08f)
+    }
+    drawPath(collarPath, color = Color.White.copy(alpha = 0.85f), style = Stroke(width = 2.5f))
+
+    // Emblem lebah kuning mini di dada kiri baju mint
+    drawRoundRect(
+        color = Color(0xFFFDE047),
+        topLeft = Offset(cx + 5f, cy + h * 0.19f),
+        size = Size(9f, 6f),
+        cornerRadius = CornerRadius(3f, 3f)
+    )
+
+    // Tangan chubby kecil melambai lucu saat melompat
+    val armWave = if (excited) -8f else 0f
+    drawCircle(skinTone, 6.5f, Offset(cx - w * 0.28f, cy + h * 0.18f + armWave))
+    drawCircle(skinTone, 6.5f, Offset(cx + w * 0.28f, cy + h * 0.18f - armWave))
+
+    // 3. Telinga Chubby & Earpiece Robot Mint
+    drawCircle(skinShade, 6f, Offset(cx - w * 0.27f, cy - h * 0.06f))
+    drawCircle(skinShade, 6f, Offset(cx + w * 0.27f, cy - h * 0.06f))
+    drawRoundRect(mintShadow, Offset(cx - w * 0.31f, cy - h * 0.11f), Size(6f, 12f), CornerRadius(4f, 4f))
+    drawRoundRect(mintShadow, Offset(cx + w * 0.25f, cy - h * 0.11f), Size(6f, 12f), CornerRadius(4f, 4f))
+
+    // 4. Kepala Bulat Chubby Menggemaskan
+    drawRoundRect(
+        brush = Brush.verticalGradient(listOf(skinTone, skinShade)),
+        topLeft = Offset(cx - w * 0.27f, cy - h * 0.28f),
+        size = Size(w * 0.54f, h * 0.39f),
+        cornerRadius = CornerRadius(36f, 36f)
+    )
+
+    // 5. Rambut Hitam Halus di Puncak Kepala (sesuai foto)
+    val hairPath = Path().apply {
+        moveTo(cx - w * 0.22f, cy - h * 0.18f)
+        cubicTo(
+            cx - w * 0.18f, cy - h * 0.34f,
+            cx + w * 0.18f, cy - h * 0.34f,
+            cx + w * 0.22f, cy - h * 0.18f
+        )
+        cubicTo(
+            cx + w * 0.10f, cy - h * 0.25f,
+            cx - w * 0.10f, cy - h * 0.25f,
+            cx - w * 0.22f, cy - h * 0.18f
+        )
+        close()
+    }
+    drawPath(hairPath, color = Color(0xFF271C19))
+
+    // 6. Pipi Chubby Merona Lembut
+    drawOval(
+        color = blushPink,
+        topLeft = Offset(cx - w * 0.21f, cy - h * 0.04f),
+        size = Size(13f, 8f)
+    )
+    drawOval(
+        color = blushPink,
+        topLeft = Offset(cx + w * 0.21f - 13f, cy - h * 0.04f),
+        size = Size(13f, 8f)
+    )
+
+    // 7. Mata Berbinar yang Melirik & Berkedip Alami
+    val ex = lookX * 5.5f
+    val ey = lookY * 2.5f
+    val eyeY = cy - h * 0.10f + ey
+    val leftEyeX = cx - 10f + ex
+    val rightEyeX = cx + 10f + ex
+
+    if (blink > 0.5f) {
+        // Mata tertutup melengkung manis saat berkedip
+        drawArc(
+            color = Color(0xFF271C19),
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(leftEyeX - 5f, eyeY - 3f),
+            size = Size(10f, 6f),
+            style = Stroke(width = 2.2f, cap = StrokeCap.Round)
+        )
+        drawArc(
+            color = Color(0xFF271C19),
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(rightEyeX - 5f, eyeY - 3f),
+            size = Size(10f, 6f),
+            style = Stroke(width = 2.2f, cap = StrokeCap.Round)
+        )
+    } else {
+        // Bola mata gelap berbinar dengan pantulan cahaya putih
+        drawCircle(Color(0xFF1E1B18), 5.2f, Offset(leftEyeX, eyeY))
+        drawCircle(Color(0xFF1E1B18), 5.2f, Offset(rightEyeX, eyeY))
+        drawCircle(Color.White, 2.0f, Offset(leftEyeX - 1.5f, eyeY - 1.8f))
+        drawCircle(Color.White, 2.0f, Offset(rightEyeX - 1.5f, eyeY - 1.8f))
+    }
+
+    // 8. Mulut Mungil Tersenyum Manis
+    val mouthPath = Path().apply {
+        moveTo(cx - 4.5f + ex * 0.5f, cy + h * 0.01f)
+        quadraticTo(cx + ex * 0.5f, cy + h * 0.045f, cx + 4.5f + ex * 0.5f, cy + h * 0.01f)
+    }
+    drawPath(
+        mouthPath,
+        color = Color(0xFFE11D48).copy(alpha = 0.75f),
+        style = Stroke(width = 2.2f, cap = StrokeCap.Round)
+    )
 }
 
 private fun DrawScope.drawAstroBot(
@@ -1126,18 +1416,6 @@ private fun DrawScope.drawCrawlerBot(
     drawCircle(led, 2.5f, Offset(cx + 8f + lookX * 5f, cy))
 }
 
-private fun DrawScope.drawTitanBot(
-    cx: Float, cy: Float, w: Float, h: Float,
-    lookX: Float, lookY: Float, stride: Float, led: Color
-) {
-    drawLine(Color.White, Offset(cx, cy - 24f), Offset(cx + lookX * 4f, cy - 34f), 3f, StrokeCap.Round)
-    drawCircle(led, 3.5f, Offset(cx + lookX * 4f, cy - 35f))
-    drawRoundRect(Color(0xFF334155), Offset(cx - 25f, cy - 6f), Size(50f, 22f), CornerRadius(8f, 8f))
-    drawCircle(led, 6f, Offset(cx, cy + 5f))
-    drawRoundRect(Color(0xFF94A3B8), Offset(cx - 14f + lookX * 3f, cy - 24f), Size(28f, 16f), CornerRadius(4f, 4f))
-    drawRect(led, Offset(cx - 9f + lookX * 6f, cy - 18f + lookY * 2f), Size(18f, 4.5f))
-}
-
 private fun DrawScope.drawNekoBot(
     cx: Float, cy: Float, w: Float, h: Float,
     lookX: Float, lookY: Float, led: Color, happy: Boolean
@@ -1186,13 +1464,16 @@ private fun DrawScope.drawDroneBot(
 @Composable
 fun RobotPickerDialog(
     selectedRobot: RobotType,
+    customPhoto: ImageBitmap?,
     onSelect: (RobotType) -> Unit,
+    onPickGalleryPhoto: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 520.dp)
                 .clip(RoundedCornerShape(26.dp))
                 .background(Color(0xFF111622))
                 .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(26.dp))
@@ -1200,39 +1481,62 @@ fun RobotPickerDialog(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Pilih Robot Pendamping",
+                text = "Pilih Karakter Pendamping",
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-            RobotType.entries.forEach { robot ->
-                val isSelected = robot == selectedRobot
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(if (isSelected) robot.accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.06f))
-                        .border(
-                            width = if (isSelected) 1.5.dp else 1.dp,
-                            color = if (isSelected) robot.accent else Color.White.copy(alpha = 0.1f),
-                            shape = RoundedCornerShape(14.dp)
+
+            // Tombol unggah foto asli dari Galeri HP
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF6EE7B7).copy(alpha = 0.22f))
+                    .border(1.5.dp, Color(0xFF6EE7B7), RoundedCornerShape(14.dp))
+                    .combinedClickable(onClick = onPickGalleryPhoto)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(Icons.Rounded.AddPhotoAlternate, contentDescription = null, tint = Color(0xFF6EE7B7))
+                Column {
+                    Text("Gunakan Foto Asli dari Galeri", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Pasang foto si kecil ke dalam bingkai astronot lucu", color = Color.White.copy(0.7f), fontSize = 11.sp)
+                }
+            }
+
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(RobotType.entries) { robot ->
+                    val isSelected = robot == selectedRobot
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isSelected) robot.accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.06f))
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) robot.accent else Color.White.copy(alpha = 0.1f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .combinedClickable(onClick = { onSelect(robot) })
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        InteractiveRobotCanvas(
+                            robotType = robot,
+                            customPhoto = customPhoto,
+                            accentColor = robot.accent,
+                            lookX = 0.15f,
+                            lookY = 0f,
+                            stepTrigger = 1,
+                            modifier = Modifier.size(46.dp)
                         )
-                        .combinedClickable(onClick = { onSelect(robot) })
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    InteractiveRobotCanvas(
-                        robotType = robot,
-                        accentColor = robot.accent,
-                        lookX = 0.2f,
-                        lookY = 0f,
-                        stepTrigger = 1,
-                        modifier = Modifier.size(44.dp)
-                    )
-                    Column {
-                        Text(robot.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text(robot.subtitle, color = Color.White.copy(0.6f), fontSize = 11.sp)
+                        Column {
+                            Text(robot.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text(robot.subtitle, color = Color.White.copy(0.6f), fontSize = 11.sp)
+                        }
                     }
                 }
             }
@@ -1336,6 +1640,33 @@ fun ContextMenuRow(
 
 // --- HELPER FUNCTIONS ---
 
+fun saveCustomAvatarFromUri(context: Context, uri: Uri): Bitmap? {
+    return try {
+        val input = context.contentResolver.openInputStream(uri) ?: return null
+        val original = BitmapFactory.decodeStream(input)
+        input.close()
+        if (original == null) return null
+        val scaled = Bitmap.createScaledBitmap(original, 256, 256, true)
+        val file = File(context.filesDir, "baby_axcel_avatar.png")
+        FileOutputStream(file).use { out ->
+            scaled.compress(Bitmap.CompressFormat.PNG, 95, out)
+        }
+        scaled
+    } catch (e: Exception) {
+        null
+    }
+}
+
+fun loadSavedCustomAvatar(context: Context): ImageBitmap? {
+    return try {
+        val file = File(context.filesDir, "baby_axcel_avatar.png")
+        if (!file.exists()) return null
+        BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+    } catch (e: Exception) {
+        null
+    }
+}
+
 suspend fun loadPhoneApps(context: Context): List<PhoneAppInfo> = withContext(Dispatchers.IO) {
     val pm = context.packageManager
     val appMap = LinkedHashMap<String, PhoneAppInfo>()
@@ -1373,10 +1704,10 @@ fun drawableToBitmap(drawable: Drawable, width: Int = 144, height: Int = 144): B
 fun extractDominantColor(bitmap: Bitmap): Color {
     return try {
         val palette = Palette.from(bitmap).generate()
-        val colorInt = palette.getVibrantColor(palette.getDominantColor(0xFF2563EB.toInt()))
+        val colorInt = palette.getVibrantColor(palette.getDominantColor(0xFF10B981.toInt()))
         Color(colorInt)
     } catch (e: Exception) {
-        Color(0xFF2563EB)
+        Color(0xFF10B981)
     }
 }
 
@@ -1423,9 +1754,10 @@ fun uninstallApp(context: Context, packageName: String) {
     }
     context.startActivity(intent)
 }
+
 fun openDefaultLauncherSettings(context: Context) {
     try {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = context.getSystemService(Context.ROLE_SERVICE) as android.app.role.RoleManager
             if (roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) &&
                 !roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)
