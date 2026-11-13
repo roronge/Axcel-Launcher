@@ -630,7 +630,7 @@ fun CustomAxcelStatusBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(
-                imageVector = Icons.Rounded.NotificationsActive,
+                imageVector = Icons.Rounded.Notifications,
                 contentDescription = null,
                 tint = Color(0xFFFDE68A),
                 modifier = Modifier.size(14.dp)
@@ -710,7 +710,7 @@ fun CustomNotificationShadeOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color(0xFFFDE68A))
+                    Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFDE68A))
                     Text(
                         text = "Axcel Notification & Control",
                         color = Color.White,
@@ -743,7 +743,7 @@ fun CustomNotificationShadeOverlay(
                     onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }
                 )
                 QuickControlTile(
-                    icon = if (torchOn) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
+                    icon = if (torchOn) Icons.Rounded.Star else Icons.Rounded.StarBorder,
                     label = "Senter",
                     active = torchOn,
                     modifier = Modifier.weight(1f),
@@ -753,14 +753,14 @@ fun CustomNotificationShadeOverlay(
                     }
                 )
                 QuickControlTile(
-                    icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                    icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.Lock,
                     label = "Lockscreen",
                     active = isLockEnabled,
                     modifier = Modifier.weight(1f),
                     onClick = onToggleLockScreen
                 )
                 QuickControlTile(
-                    icon = Icons.Rounded.Visibility,
+                    icon = Icons.Rounded.Lock,
                     label = "Tes Lock",
                     active = false,
                     modifier = Modifier.weight(1f),
@@ -1239,7 +1239,7 @@ fun PhoneTopHeader(
                 onClick = onOpenRobotPicker
             )
             SmallGlassButton(
-                icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.Lock,
                 label = "Lock",
                 tint = if (isLockEnabled) Color(0xFF6EE7B7) else Color.White.copy(0.6f),
                 onClick = onToggleLockScreen
@@ -2087,7 +2087,7 @@ fun AppContextDialog(
             HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
 
             ContextMenuRow(
-                icon = if (isPinned) Icons.Rounded.HeartBroken else Icons.Rounded.Favorite,
+                icon = if (isPinned) Icons.Rounded.FavoriteBorder else Icons.Rounded.Favorite,
                 text = if (isPinned) "Hapus dari Kartu Favorit (♥)" else "Jadikan Kartu Favorit (♥)",
                 onClick = onTogglePin
             )

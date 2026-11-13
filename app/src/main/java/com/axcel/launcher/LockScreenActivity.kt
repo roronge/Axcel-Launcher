@@ -2,11 +2,11 @@ package com.axcel.launcher
 
 import android.app.KeyguardManager
 import android.content.Context
+import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -22,7 +22,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -117,7 +119,6 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 1. JAM BESAR & TANGGAL LOCKSCREEN
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(top = 12.dp)
@@ -143,7 +144,7 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                 Text(
                     text = currentTime,
                     color = Color.White,
-                    fontSize = 68.sp,
+                    fontSize = 66.sp,
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-2).sp
                 )
@@ -155,7 +156,6 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                 )
             }
 
-            // 2. AVATAR BABY AXCEL INTERAKTIF DI TENGAH LOCKSCREEN
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
@@ -172,7 +172,7 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                     lookX = 0f,
                     lookY = 0f,
                     stepTrigger = hopTrigger,
-                    modifier = Modifier.size(110.dp)
+                    modifier = Modifier.size(106.dp)
                 )
                 Text(
                     text = "Tap Baby Axcel • Geser Bawah untuk Buka",
@@ -182,12 +182,11 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                 )
             }
 
-            // 3. NOTIFIKASI MASUK DI LOCKSCREEN (IKON SERAGAM)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(vertical = 12.dp)
+                    .padding(vertical = 10.dp)
             ) {
                 if (notifications.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -266,13 +265,11 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                 }
             }
 
-            // 4. SLIDER GESER BUKA KUNCI + PINTASAN SENTER & KAMERA
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Tombol Senter
                 Box(
                     modifier = Modifier
                         .size(52.dp)
@@ -286,19 +283,17 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (torchOn) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
+                        imageVector = Icons.Rounded.Star,
                         contentDescription = "Senter",
                         tint = if (torchOn) Color.Black else Color.White
                     )
                 }
 
-                // Slider Geser Buka Kunci (Slide to Unlock)
                 SlideToUnlockPill(
                     modifier = Modifier.weight(1f),
                     onUnlocked = onUnlock
                 )
 
-                // Tombol Kamera
                 Box(
                     modifier = Modifier
                         .size(52.dp)
@@ -318,7 +313,7 @@ fun BabyAxcelLockScreen(onUnlock: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.CameraAlt,
+                        imageVector = Icons.Rounded.PhotoCamera,
                         contentDescription = "Kamera",
                         tint = Color.White
                     )
@@ -377,10 +372,10 @@ fun SlideToUnlockPill(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Rounded.LockOpen,
+                imageVector = Icons.Rounded.Lock,
                 contentDescription = "Unlock",
                 tint = Color(0xFF022C22),
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(20.dp)
             )
         }
     }
