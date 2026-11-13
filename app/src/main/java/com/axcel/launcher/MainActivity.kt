@@ -743,7 +743,7 @@ fun CustomNotificationShadeOverlay(
                     onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }
                 )
                 QuickControlTile(
-                    icon = if (torchOn) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                    icon = if (torchOn) Icons.Rounded.Star else Icons.Rounded.Star,
                     label = "Senter",
                     active = torchOn,
                     modifier = Modifier.weight(1f),

@@ -78,7 +78,7 @@ class AxcelNotificationListener : NotificationListenerService() {
 
     fun refreshAllNotifications() {
         try {
-            val sbns: Array<StatusBarNotification> = this.getActiveNotifications() ?: return
+            val sbns = activeNotifications ?: return
             val pm = packageManager
             val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
             val mapped = ArrayList<UnifiedNotifItem>()
@@ -97,24 +97,25 @@ class AxcelNotificationListener : NotificationListenerService() {
                 }
                 val appLabel = appInfo?.let { pm.getApplicationLabel(it).toString() } ?: sbn.packageName
                 val rawDrawable = appInfo?.let { pm.getApplicationIcon(it) }
-                    ?: ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon)!!
-                val bmp = drawableToBitmap(rawDrawable)
-                val dominant = extractDominantColor(bmp)
-
-                mapped.add(
-                    UnifiedNotifItem(
-                        key = sbn.key,
-                        packageName = sbn.packageName,
-                        appName = appLabel,
-                        title = title.ifEmpty { appLabel },
-                        text = text,
-                        timeText = timeFmt.format(Date(sbn.postTime)),
-                        appIcon = bmp.asImageBitmap(),
-                        dominantColor = dominant,
-                        contentIntent = sbn.notification.contentIntent,
-                        isClearable = sbn.isClearable
+                    ?: ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon)
+                if (rawDrawable != null) {
+                    val bmp = drawableToBitmap(rawDrawable)
+                    val dominant = extractDominantColor(bmp)
+                    mapped.add(
+                        UnifiedNotifItem(
+                            key = sbn.key,
+                            packageName = sbn.packageName,
+                            appName = appLabel,
+                            title = title.ifEmpty { appLabel },
+                            text = text,
+                            timeText = timeFmt.format(Date(sbn.postTime)),
+                            appIcon = bmp.asImageBitmap(),
+                            dominantColor = dominant,
+                            contentIntent = sbn.notification.contentIntent,
+                            isClearable = sbn.isClearable
+                        )
                     )
-                )
+                }
             }
 
             NotificationStore.activeNotifications.clear()
