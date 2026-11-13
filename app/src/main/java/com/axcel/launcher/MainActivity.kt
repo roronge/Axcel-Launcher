@@ -21,15 +21,22 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -54,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -114,6 +122,17 @@ enum class DeckFilter(val label: String, val suit: String) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Jalankan service Lockscreen kustom secara otomatis
+        try {
+            val serviceIntent = Intent(this, LockScreenService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        } catch (_: Exception) {
+        }
+
         setContent {
             BackHandler(enabled = true) {}
             AxcelPhoneLauncherScreen()
@@ -134,7 +153,6 @@ fun AxcelPhoneLauncherScreen() {
     var dockPackages by remember {
         mutableStateOf(prefs.getStringSet("dock_apps", emptySet())?.toList() ?: emptyList())
     }
-    // Tema default langsung BABY_MINT agar serasi dengan Baby Axcel
     var selectedTheme by remember {
         mutableStateOf(
             AmbientTheme.entries.find { it.name == prefs.getString("ambient_theme", "BABY_MINT") }
@@ -149,7 +167,10 @@ fun AxcelPhoneLauncherScreen() {
     }
     var customPhotoBitmap by remember { mutableStateOf<ImageBitmap?>(loadSavedCustomAvatar(context)) }
     var isDefaultHome by remember { mutableStateOf(checkIsDefaultLauncher(context)) }
+    var isLockScreenEnabled by remember { mutableStateOf(prefs.getBoolean("custom_lockscreen_enabled", true)) }
+    var hasNotifPermission by remember { mutableStateOf(NotificationStore.isPermissionGranted(context)) }
 
+    var showNotifShade by remember { mutableStateOf(false) }
     var activeFilter by remember { mutableStateOf(DeckFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var contextMenuApp by remember { mutableStateOf<PhoneAppInfo?>(null) }
@@ -160,6 +181,8 @@ fun AxcelPhoneLauncherScreen() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isDefaultHome = checkIsDefaultLauncher(context)
+                hasNotifPermission = NotificationStore.isPermissionGranted(context)
+                NotificationStore.listenerInstance?.refreshAllNotifications()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -254,7 +277,7 @@ fun AxcelPhoneLauncherScreen() {
             val item = listState.layoutInfo.visibleItemsInfo.find { it.index == safeCenterIndex }
             if (item == null || item.size == 0) 0f
             else {
-                val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2f
+                val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.viewportEndOffset) / 2f
                 val itemCenter = item.offset + item.size / 2f
                 ((itemCenter - viewportCenter) / item.size).coerceIn(-1f, 1f)
             }
@@ -284,8 +307,17 @@ fun AxcelPhoneLauncherScreen() {
                     )
                 )
             )
+            // Gestur tarik ke bawah dari layar utama untuk membuka Custom Notification Bar & Control Center
+            .pointerInput(Unit) {
+                detectVerticalDragGestures { _, dragAmount ->
+                    if (dragAmount > 28f) {
+                        showNotifShade = true
+                    } else if (dragAmount < -28f) {
+                        showNotifShade = false
+                    }
+                }
+            }
     ) {
-        // BACKGROUND KHUSUS BABY AXCEL: Bintang Berkelip, Gelembung Mint Bokeh, & Awan Pastel Lembut
         BabyAxcelAmbientBackground(
             accentMint = Color(0xFF6EE7B7),
             warmStar = Color(0xFFFDE68A),
@@ -299,9 +331,16 @@ fun AxcelPhoneLauncherScreen() {
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // 0. CUSTOM TOP STATUS & NOTIFICATION BAR PILL (Ketuk atau tarik ke bawah untuk membuka laci notifikasi)
+            CustomAxcelStatusBar(
+                notifCount = NotificationStore.activeNotifications.size,
+                onOpenShade = { showNotifShade = true }
+            )
+
             // 1. HEADER SMARTPHONE
             PhoneTopHeader(
                 isDefaultHome = isDefaultHome,
+                isLockEnabled = isLockScreenEnabled,
                 currentTheme = selectedTheme,
                 currentRobot = selectedRobot,
                 onOpenRobotPicker = { showRobotPicker = true },
@@ -309,6 +348,14 @@ fun AxcelPhoneLauncherScreen() {
                     val next = (selectedTheme.ordinal + 1) % AmbientTheme.entries.size
                     selectedTheme = AmbientTheme.entries[next]
                     prefs.edit().putString("ambient_theme", selectedTheme.name).apply()
+                },
+                onToggleLockScreen = {
+                    isLockScreenEnabled = !isLockScreenEnabled
+                    prefs.edit().putBoolean("custom_lockscreen_enabled", isLockScreenEnabled).apply()
+                    if (isLockScreenEnabled) {
+                        // Pratinjau langsung LockScreen saat diaktifkan
+                        context.startActivity(Intent(context, LockScreenActivity::class.java))
+                    }
                 },
                 onRequestDefaultHome = { openDefaultLauncherSettings(context) }
             )
@@ -369,7 +416,7 @@ fun AxcelPhoneLauncherScreen() {
                     LazyRow(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 96.dp, vertical = 10.dp),
+                        contentPadding = PaddingValues(horizontal = 96.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy((-32).dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -431,7 +478,7 @@ fun AxcelPhoneLauncherScreen() {
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .height(46.dp),
                     shape = CircleShape,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
@@ -450,7 +497,7 @@ fun AxcelPhoneLauncherScreen() {
                             .clip(RoundedCornerShape(26.dp))
                             .background(Color(0xFF0E292B).copy(alpha = 0.68f))
                             .border(1.2.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), RoundedCornerShape(26.dp))
-                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -464,6 +511,31 @@ fun AxcelPhoneLauncherScreen() {
                     }
                 }
             }
+        }
+
+        // CUSTOM NOTIFICATION BAR & CONTROL CENTER SHADE (Seragam dengan Tema Baby Axcel)
+        AnimatedVisibility(
+            visible = showNotifShade,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            modifier = Modifier.zIndex(100f)
+        ) {
+            CustomNotificationShadeOverlay(
+                hasNotifPermission = hasNotifPermission,
+                isLockEnabled = isLockScreenEnabled,
+                onRequestNotifPermission = {
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                },
+                onToggleLockScreen = {
+                    isLockScreenEnabled = !isLockScreenEnabled
+                    prefs.edit().putBoolean("custom_lockscreen_enabled", isLockScreenEnabled).apply()
+                },
+                onOpenLockPreview = {
+                    showNotifShade = false
+                    context.startActivity(Intent(context, LockScreenActivity::class.java))
+                },
+                onClose = { showNotifShade = false }
+            )
         }
 
         if (showRobotPicker) {
@@ -520,9 +592,393 @@ fun AxcelPhoneLauncherScreen() {
 }
 
 /**
- * Latar belakang tema khusus Baby Axcel:
- * Gelembung cahaya mint lembut, bintang emas berkelip, dan gelombang awan pastel.
+ * Custom Notification Status Bar Pill di bagian paling atas Home Screen.
+ * Menampilkan pratinjau ikon notifikasi seragam & membuka laci notifikasi saat diketuk/ditarik.
  */
+@Composable
+fun CustomAxcelStatusBar(
+    notifCount: Int,
+    onOpenShade: () -> Unit
+) {
+    val context = LocalContext.current
+    var batteryPct by remember { mutableIntStateOf(100) }
+    var networkLabel by remember { mutableStateOf("Wi-Fi") }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            batteryPct = getBatteryLevel(context)
+            networkLabel = getNetworkLabel(context)
+            delay(5000L)
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF0A1E21).copy(alpha = 0.78f))
+            .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), CircleShape)
+            .clickable { onOpenShade() }
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Kiri: Badge Notifikasi dengan Ikon Aplikasi Seragam
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.NotificationsActive,
+                contentDescription = null,
+                tint = Color(0xFFFDE68A),
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = if (notifCount > 0) "$notifCount Notifikasi" else "Control Center",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            // Tampilkan maksimal 3 mini-ikon aplikasi yang mengirim notifikasi
+            NotificationStore.activeNotifications.take(3).forEach { item ->
+                UnifiedAppBadgeRaw(
+                    icon = item.appIcon,
+                    dominantColor = item.dominantColor,
+                    size = 18.dp
+                )
+            }
+        }
+
+        // Kanan: Sinyal, Baterai, & Panah Tarik
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "$networkLabel • $batteryPct%",
+                color = Color(0xFFA7F3D0),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Icon(
+                imageVector = Icons.Rounded.KeyboardArrowDown,
+                contentDescription = "Buka Notifikasi",
+                tint = Color(0xFF6EE7B7),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Laci Custom Notification Bar & Quick Control Center (Seragam dengan Baby Axcel Mint Theme)
+ */
+@Composable
+fun CustomNotificationShadeOverlay(
+    hasNotifPermission: Boolean,
+    isLockEnabled: Boolean,
+    onRequestNotifPermission: () -> Unit,
+    onToggleLockScreen: () -> Unit,
+    onOpenLockPreview: () -> Unit,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    var torchOn by remember { mutableStateOf(false) }
+    val notifications = NotificationStore.activeNotifications
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF040A0E).copy(alpha = 0.94f))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Header Laci Notifikasi
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color(0xFFFDE68A))
+                    Text(
+                        text = "Axcel Notification & Control",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Tutup", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            // Grid Quick Toggles Seragam (Ikon Medali Mint-Gold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickControlTile(
+                    icon = Icons.Rounded.Wifi,
+                    label = "Wi-Fi",
+                    active = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }
+                )
+                QuickControlTile(
+                    icon = if (torchOn) Icons.Rounded.FlashlightOn else Icons.Rounded.FlashlightOff,
+                    label = "Senter",
+                    active = torchOn,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        torchOn = !torchOn
+                        toggleFlashlight(context, torchOn)
+                    }
+                )
+                QuickControlTile(
+                    icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                    label = "Lockscreen",
+                    active = isLockEnabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = onToggleLockScreen
+                )
+                QuickControlTile(
+                    icon = Icons.Rounded.Visibility,
+                    label = "Tes Lock",
+                    active = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenLockPreview
+                )
+            }
+
+            // Banner Izin Akses Notifikasi jika belum diaktifkan
+            if (!hasNotifPermission) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFFF59E0B).copy(alpha = 0.22f))
+                        .border(1.dp, Color(0xFFFBBF24), RoundedCornerShape(18.dp))
+                        .clickable { onRequestNotifPermission() }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.Rounded.NotificationsPaused, contentDescription = null, tint = Color(0xFFFDE68A))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Aktifkan Akses Notifikasi",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Tap di sini agar semua notifikasi & ikon aplikasi tampil seragam di Axcel Bar.",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Header Daftar Notifikasi + Tombol Hapus Semua
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Notifikasi Masuk (${notifications.size})",
+                    color = Color(0xFFA7F3D0),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (notifications.isNotEmpty()) {
+                    Text(
+                        text = "Bersihkan",
+                        color = Color(0xFFFDE68A),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .clickable { NotificationStore.clearAllClearable() }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            // Daftar Notifikasi dengan Ikon Aplikasi Seragam
+            if (notifications.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Belum ada notifikasi aktif saat ini",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 13.sp
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(notifications, key = { it.key }) { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color(0xFF0E292B).copy(alpha = 0.85f))
+                                .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+                                .clickable {
+                                    try {
+                                        item.contentIntent?.send()
+                                    } catch (_: Exception) {
+                                    }
+                                    onClose()
+                                }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Ikon Aplikasi Pengirim Notifikasi Dibungkus Medali Seragam
+                            UnifiedAppBadgeRaw(
+                                icon = item.appIcon,
+                                dominantColor = item.dominantColor,
+                                size = 46.dp
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = item.appName,
+                                        color = Color(0xFF6EE7B7),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = item.timeText,
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Text(
+                                    text = item.title,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (item.text.isNotEmpty()) {
+                                    Text(
+                                        text = item.text,
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (item.isClearable) {
+                                IconButton(onClick = { NotificationStore.dismissNotification(item.key) }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = "Hapus",
+                                        tint = Color.White.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tombol Tutup di Bawah
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(CircleShape)
+                    .background(Color(0xFF6EE7B7).copy(alpha = 0.2f))
+                    .clickable { onClose() }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Tutup Control Center ▲",
+                    color = Color(0xFFA7F3D0),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun QuickControlTile(
+    icon: ImageVector,
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (active) Color(0xFF6EE7B7).copy(alpha = 0.28f) else Color(0xFF0E292B).copy(alpha = 0.7f))
+            .border(
+                1.dp,
+                if (active) Color(0xFF6EE7B7) else Color.White.copy(alpha = 0.16f),
+                RoundedCornerShape(18.dp)
+            )
+            .clickable { onClick() }
+            .padding(vertical = 12.dp, horizontal = 4.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (active) Color(0xFFFDE68A) else Color.White,
+            modifier = Modifier.size(22.dp)
+        )
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+    }
+}
+
 @Composable
 fun BabyAxcelAmbientBackground(
     accentMint: Color,
@@ -553,30 +1009,22 @@ fun BabyAxcelAmbientBackground(
         val w = size.width
         val h = size.height
 
-        // 1. Gelembung Bokeh Mint & Emas Lembut Melayang
         drawCircle(
-            brush = Brush.radialGradient(
-                listOf(accentMint.copy(alpha = 0.22f), Color.Transparent)
-            ),
+            brush = Brush.radialGradient(listOf(accentMint.copy(alpha = 0.22f), Color.Transparent)),
             radius = w * 0.45f,
             center = Offset(w * 0.82f + cos(driftPhase) * 28f, h * 0.18f + sin(driftPhase) * 22f)
         )
         drawCircle(
-            brush = Brush.radialGradient(
-                listOf(warmStar.copy(alpha = 0.14f), Color.Transparent)
-            ),
+            brush = Brush.radialGradient(listOf(warmStar.copy(alpha = 0.14f), Color.Transparent)),
             radius = w * 0.38f,
             center = Offset(w * 0.18f + sin(driftPhase) * 24f, h * 0.46f + cos(driftPhase) * 18f)
         )
         drawCircle(
-            brush = Brush.radialGradient(
-                listOf(accentMint.copy(alpha = 0.18f), Color.Transparent)
-            ),
+            brush = Brush.radialGradient(listOf(accentMint.copy(alpha = 0.18f), Color.Transparent)),
             radius = w * 0.50f,
             center = Offset(w * 0.5f, h * 0.88f)
         )
 
-        // 2. Bintang-bintang Kecil Berkelip di Langit Malam
         val starCoords = listOf(
             Offset(w * 0.12f, h * 0.14f),
             Offset(w * 0.34f, h * 0.09f),
@@ -597,7 +1045,6 @@ fun BabyAxcelAmbientBackground(
             )
         }
 
-        // 3. Siluet Awan Pastel Transparan di Bagian Bawah
         val cloudPath = Path().apply {
             moveTo(0f, h * 0.86f)
             quadraticBezierTo(w * 0.25f, h * 0.81f, w * 0.52f, h * 0.85f)
@@ -608,21 +1055,15 @@ fun BabyAxcelAmbientBackground(
         }
         drawPath(
             path = cloudPath,
-            brush = Brush.verticalGradient(
-                listOf(accentMint.copy(alpha = 0.08f), Color.Transparent)
-            )
+            brush = Brush.verticalGradient(listOf(accentMint.copy(alpha = 0.08f), Color.Transparent))
         )
     }
 }
 
-/**
- * Komponen Penyeragam Ikon Aplikasi (Unified Launcher Icon Badge):
- * Membungkus setiap ikon aplikasi terinstal ke dalam medali Squircle 3D seragam
- * dengan bingkai Mint-Gold, latar gradien harmonis, dan pantulan kaca.
- */
 @Composable
-fun UnifiedLauncherAppIcon(
-    app: PhoneAppInfo,
+fun UnifiedAppBadgeRaw(
+    icon: ImageBitmap,
+    dominantColor: Color,
     size: Dp,
     isHighlighted: Boolean = false
 ) {
@@ -631,7 +1072,7 @@ fun UnifiedLauncherAppIcon(
         modifier = Modifier
             .size(size)
             .shadow(
-                elevation = if (isHighlighted) 16.dp else 6.dp,
+                elevation = if (isHighlighted) 16.dp else 4.dp,
                 shape = RoundedCornerShape(corner),
                 ambientColor = Color(0xFF6EE7B7),
                 spotColor = if (isHighlighted) Color(0xFFFDE68A) else Color.Black
@@ -641,13 +1082,13 @@ fun UnifiedLauncherAppIcon(
                 Brush.linearGradient(
                     colors = listOf(
                         Color(0xFF17383A),
-                        app.dominantColor.copy(alpha = 0.45f),
+                        dominantColor.copy(alpha = 0.45f),
                         Color(0xFF0C1A1D)
                     )
                 )
             )
             .border(
-                width = if (isHighlighted) 2.dp else 1.3.dp,
+                width = if (isHighlighted) 2.dp else 1.2.dp,
                 brush = Brush.linearGradient(
                     colors = if (isHighlighted) {
                         listOf(Color(0xFFFDE68A), Color(0xFF6EE7B7), Color.White)
@@ -659,18 +1100,15 @@ fun UnifiedLauncherAppIcon(
             ),
         contentAlignment = Alignment.Center
     ) {
-        // Ikon asli dipotong seragam di dalam medali squircle
         Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
+            bitmap = icon,
+            contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(size * 0.08f)
                 .clip(RoundedCornerShape(corner * 0.85f))
         )
-
-        // Lapisan kilau kaca seragam di bagian atas ikon
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -687,21 +1125,35 @@ fun UnifiedLauncherAppIcon(
     }
 }
 
+@Composable
+fun UnifiedLauncherAppIcon(
+    app: PhoneAppInfo,
+    size: Dp,
+    isHighlighted: Boolean = false
+) {
+    UnifiedAppBadgeRaw(
+        icon = app.icon,
+        dominantColor = app.dominantColor,
+        size = size,
+        isHighlighted = isHighlighted
+    )
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhoneTopHeader(
     isDefaultHome: Boolean,
+    isLockEnabled: Boolean,
     currentTheme: AmbientTheme,
     currentRobot: RobotType,
     onOpenRobotPicker: () -> Unit,
     onCycleTheme: () -> Unit,
+    onToggleLockScreen: () -> Unit,
     onRequestDefaultHome: () -> Unit
 ) {
     val context = LocalContext.current
     var currentTime by remember { mutableStateOf("") }
     var currentDate by remember { mutableStateOf("") }
-    var batteryPct by remember { mutableIntStateOf(100) }
-    var networkLabel by remember { mutableStateOf("Online") }
 
     LaunchedEffect(Unit) {
         val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -710,8 +1162,6 @@ fun PhoneTopHeader(
             val now = Date()
             currentTime = timeFmt.format(now)
             currentDate = dateFmt.format(now)
-            batteryPct = getBatteryLevel(context)
-            networkLabel = getNetworkLabel(context)
             delay(5000L)
         }
     }
@@ -719,8 +1169,8 @@ fun PhoneTopHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -731,12 +1181,12 @@ fun PhoneTopHeader(
                 Text(
                     text = currentTime,
                     color = Color.White,
-                    fontSize = 32.sp,
+                    fontSize = 30.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.5).sp
                 )
                 Text(
-                    text = "$currentDate • $networkLabel • $batteryPct%",
+                    text = currentDate,
                     color = Color(0xFFA7F3D0).copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
@@ -755,20 +1205,20 @@ fun PhoneTopHeader(
                         CircleShape
                     )
                     .combinedClickable(onClick = onRequestDefaultHome)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 13.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Icon(
                     imageVector = if (isDefaultHome) Icons.Rounded.CheckCircle else Icons.Rounded.Home,
                     contentDescription = null,
                     tint = if (isDefaultHome) Color(0xFF6EE7B7) else Color(0xFFFBBF24),
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
                 Text(
                     text = if (isDefaultHome) "Home Default" else "Jadikan Default",
                     color = Color.White,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     softWrap = false
@@ -778,7 +1228,7 @@ fun PhoneTopHeader(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             SmallGlassButton(
@@ -787,6 +1237,12 @@ fun PhoneTopHeader(
                 tint = currentRobot.accent,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenRobotPicker
+            )
+            SmallGlassButton(
+                icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                label = "Lock",
+                tint = if (isLockEnabled) Color(0xFF6EE7B7) else Color.White.copy(0.6f),
+                onClick = onToggleLockScreen
             )
             SmallGlassButton(
                 icon = Icons.Rounded.Palette,
@@ -819,11 +1275,11 @@ fun SmallGlassButton(
             .background(Color(0xFF0E292B).copy(alpha = 0.65f))
             .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.30f), CircleShape)
             .combinedClickable(onClick = onClick)
-            .padding(horizontal = if (label.isEmpty()) 11.dp else 12.dp, vertical = 7.dp),
+            .padding(horizontal = if (label.isEmpty()) 10.dp else 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(15.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
         if (label.isNotEmpty()) {
             Text(
                 text = label,
@@ -866,7 +1322,7 @@ fun RobotCompanionStage(
                 )
             )
             .border(1.2.dp, Color(0xFF6EE7B7).copy(alpha = 0.38f), RoundedCornerShape(24.dp))
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -877,7 +1333,7 @@ fun RobotCompanionStage(
                 modifier = Modifier
                     .weight(1f)
                     .combinedClickable(onClick = onOpenActiveApp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -901,15 +1357,15 @@ fun RobotCompanionStage(
                 Text(
                     text = app?.label ?: "Axcel Launcher",
                     color = Color.White,
-                    fontSize = 20.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Geser kartu • Tap buka • Tap Baby Axcel ganti karakter",
+                    text = "Tarik atas: Notifikasi • Tap foto: Ganti karakter",
                     color = Color(0xFFA7F3D0).copy(alpha = 0.8f),
-                    fontSize = 11.sp
+                    fontSize = 10.sp
                 )
             }
 
@@ -929,7 +1385,7 @@ fun RobotCompanionStage(
                     lookX = lookX,
                     lookY = 0.35f,
                     stepTrigger = stepTrigger,
-                    modifier = Modifier.size(86.dp)
+                    modifier = Modifier.size(80.dp)
                 )
                 Text(
                     text = robotType.title,
@@ -962,7 +1418,7 @@ fun SuitFilterChip(
                 RoundedCornerShape(14.dp)
             )
             .combinedClickable(onClick = onClick)
-            .padding(vertical = 7.dp, horizontal = 4.dp)
+            .padding(vertical = 6.dp, horizontal = 4.dp)
     ) {
         Text(
             text = suit,
@@ -999,7 +1455,7 @@ fun PhonePlayingCardItem(
     val rankLabel = if (isPinned) "A" else ranks[index % ranks.size]
 
     val liftOffsetY by animateFloatAsState(
-        targetValue = if (isSelected) -28f else (abs(distanceFromCenter).coerceAtMost(3) * 10f),
+        targetValue = if (isSelected) -26f else (abs(distanceFromCenter).coerceAtMost(3) * 10f),
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -1008,7 +1464,7 @@ fun PhonePlayingCardItem(
     )
 
     val cardScale by animateFloatAsState(
-        targetValue = if (isSelected) 1.15f else 0.92f,
+        targetValue = if (isSelected) 1.14f else 0.92f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -1049,8 +1505,8 @@ fun PhonePlayingCardItem(
                 scaleY = cardScale
                 rotationZ = cardRotation
             }
-            .width(172.dp)
-            .height(254.dp)
+            .width(170.dp)
+            .height(246.dp)
             .shadow(
                 elevation = if (isSelected) 28.dp else 8.dp,
                 shape = RoundedCornerShape(22.dp),
@@ -1112,7 +1568,6 @@ fun PhonePlayingCardItem(
             )
         }
 
-        // Bagian Tengah: Ikon Aplikasi Seragam (Unified Squircle Medal) + Nama
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -1123,7 +1578,7 @@ fun PhonePlayingCardItem(
         ) {
             UnifiedLauncherAppIcon(
                 app = app,
-                size = 86.dp,
+                size = 84.dp,
                 isHighlighted = isSelected
             )
 
@@ -1192,10 +1647,9 @@ fun DockAppIcon(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(2.dp)
     ) {
-        // Ikon Dock bawah juga memakai bingkai seragam UnifiedLauncherAppIcon
         UnifiedLauncherAppIcon(
             app = app,
-            size = 52.dp,
+            size = 50.dp,
             isHighlighted = false
         )
     }
@@ -1304,7 +1758,7 @@ fun InteractiveRobotCanvas(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(70.dp)
                         .shadow(14.dp, CircleShape, ambientColor = ledColor)
                         .clip(CircleShape)
                         .background(Color.White)
