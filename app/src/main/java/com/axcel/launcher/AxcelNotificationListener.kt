@@ -13,7 +13,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 data class UnifiedNotifItem(
     val key: String,
@@ -33,9 +34,13 @@ object NotificationStore {
     var listenerInstance: AxcelNotificationListener? = null
 
     fun isPermissionGranted(context: Context): Boolean {
-        val cn = ComponentName(context, AxcelNotificationListener::class.java)
-        val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
-        return flat != null && flat.contains(cn.flattenToString())
+        return try {
+            val cn = ComponentName(context, AxcelNotificationListener::class.java)
+            val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+            flat != null && flat.contains(cn.flattenToString())
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun dismissNotification(key: String) {
@@ -78,7 +83,7 @@ class AxcelNotificationListener : NotificationListenerService() {
 
     fun refreshAllNotifications() {
         try {
-            val sbns = activeNotifications ?: return
+            val sbns = getActiveNotifications() ?: return
             val pm = packageManager
             val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
             val mapped = ArrayList<UnifiedNotifItem>()

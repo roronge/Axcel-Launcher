@@ -46,7 +46,20 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,7 +77,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,8 +86,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,7 +93,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -122,7 +133,6 @@ enum class DeckFilter(val label: String, val suit: String) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Jalankan service Lockscreen kustom secara otomatis
         try {
             val serviceIntent = Intent(this, LockScreenService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -143,7 +153,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AxcelPhoneLauncherScreen() {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val prefs = remember { context.getSharedPreferences("axcel_phone_prefs", Context.MODE_PRIVATE) }
 
     var allApps by remember { mutableStateOf<List<PhoneAppInfo>>(emptyList()) }
@@ -177,16 +186,14 @@ fun AxcelPhoneLauncherScreen() {
     var showRobotPicker by remember { mutableStateOf(false) }
     var cuteReactionBurst by remember { mutableIntStateOf(0) }
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isDefaultHome = checkIsDefaultLauncher(context)
-                hasNotifPermission = NotificationStore.isPermissionGranted(context)
-                NotificationStore.listenerInstance?.refreshAllNotifications()
-            }
+    // Perbarui status izin & default launcher secara berkala
+    LaunchedEffect(Unit) {
+        while (true) {
+            isDefaultHome = checkIsDefaultLauncher(context)
+            hasNotifPermission = NotificationStore.isPermissionGranted(context)
+            NotificationStore.listenerInstance?.refreshAllNotifications()
+            delay(3000L)
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -307,7 +314,6 @@ fun AxcelPhoneLauncherScreen() {
                     )
                 )
             )
-            // Gestur tarik ke bawah dari layar utama untuk membuka Custom Notification Bar & Control Center
             .pointerInput(Unit) {
                 detectVerticalDragGestures { _, dragAmount ->
                     if (dragAmount > 28f) {
@@ -331,13 +337,11 @@ fun AxcelPhoneLauncherScreen() {
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 0. CUSTOM TOP STATUS & NOTIFICATION BAR PILL (Ketuk atau tarik ke bawah untuk membuka laci notifikasi)
             CustomAxcelStatusBar(
                 notifCount = NotificationStore.activeNotifications.size,
                 onOpenShade = { showNotifShade = true }
             )
 
-            // 1. HEADER SMARTPHONE
             PhoneTopHeader(
                 isDefaultHome = isDefaultHome,
                 isLockEnabled = isLockScreenEnabled,
@@ -353,14 +357,12 @@ fun AxcelPhoneLauncherScreen() {
                     isLockScreenEnabled = !isLockScreenEnabled
                     prefs.edit().putBoolean("custom_lockscreen_enabled", isLockScreenEnabled).apply()
                     if (isLockScreenEnabled) {
-                        // Pratinjau langsung LockScreen saat diaktifkan
                         context.startActivity(Intent(context, LockScreenActivity::class.java))
                     }
                 },
                 onRequestDefaultHome = { openDefaultLauncherSettings(context) }
             )
 
-            // 2. PANGGUNG BABY AXCEL & INFO KARTU AKTIF
             RobotCompanionStage(
                 app = activeCardApp,
                 cardNumber = if (filteredApps.isEmpty()) 0 else safeCenterIndex + 1,
@@ -379,7 +381,6 @@ fun AxcelPhoneLauncherScreen() {
                 }
             )
 
-            // 3. TAB FILTER SUIT KARTU REMI (♠ ♥ ♦ ♣)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -399,7 +400,6 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 4. KIPAS JAJARAN KARTU REMI DENGAN IKON APLIKASI SERAGAM
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -438,7 +438,6 @@ fun AxcelPhoneLauncherScreen() {
                 }
             }
 
-            // 5. SEARCH BAR & BOTTOM GLASS DOCK (IKON SERAGAM)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -513,7 +512,6 @@ fun AxcelPhoneLauncherScreen() {
             }
         }
 
-        // CUSTOM NOTIFICATION BAR & CONTROL CENTER SHADE (Seragam dengan Tema Baby Axcel)
         AnimatedVisibility(
             visible = showNotifShade,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -591,10 +589,6 @@ fun AxcelPhoneLauncherScreen() {
     }
 }
 
-/**
- * Custom Notification Status Bar Pill di bagian paling atas Home Screen.
- * Menampilkan pratinjau ikon notifikasi seragam & membuka laci notifikasi saat diketuk/ditarik.
- */
 @Composable
 fun CustomAxcelStatusBar(
     notifCount: Int,
@@ -624,7 +618,6 @@ fun CustomAxcelStatusBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Kiri: Badge Notifikasi dengan Ikon Aplikasi Seragam
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -641,7 +634,6 @@ fun CustomAxcelStatusBar(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
             )
-            // Tampilkan maksimal 3 mini-ikon aplikasi yang mengirim notifikasi
             NotificationStore.activeNotifications.take(3).forEach { item ->
                 UnifiedAppBadgeRaw(
                     icon = item.appIcon,
@@ -651,7 +643,6 @@ fun CustomAxcelStatusBar(
             }
         }
 
-        // Kanan: Sinyal, Baterai, & Panah Tarik
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -672,9 +663,6 @@ fun CustomAxcelStatusBar(
     }
 }
 
-/**
- * Laci Custom Notification Bar & Quick Control Center (Seragam dengan Baby Axcel Mint Theme)
- */
 @Composable
 fun CustomNotificationShadeOverlay(
     hasNotifPermission: Boolean,
@@ -700,7 +688,6 @@ fun CustomNotificationShadeOverlay(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Header Laci Notifikasi
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -730,21 +717,20 @@ fun CustomNotificationShadeOverlay(
                 }
             }
 
-            // Grid Quick Toggles Seragam (Ikon Medali Mint-Gold)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 QuickControlTile(
-                    icon = Icons.Rounded.Wifi,
+                    icon = Icons.Rounded.Notifications,
                     label = "Wi-Fi",
                     active = true,
                     modifier = Modifier.weight(1f),
                     onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }
                 )
                 QuickControlTile(
-                    icon = if (torchOn) Icons.Rounded.Star else Icons.Rounded.Star,
-                    label = "Senter",
+                    icon = Icons.Rounded.Star,
+                    label = if (torchOn) "Senter ON" else "Senter",
                     active = torchOn,
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -753,14 +739,14 @@ fun CustomNotificationShadeOverlay(
                     }
                 )
                 QuickControlTile(
-                    icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.Lock,
+                    icon = Icons.Rounded.Lock,
                     label = "Lockscreen",
                     active = isLockEnabled,
                     modifier = Modifier.weight(1f),
                     onClick = onToggleLockScreen
                 )
                 QuickControlTile(
-                    icon = Icons.Rounded.Lock,
+                    icon = Icons.Rounded.Home,
                     label = "Tes Lock",
                     active = false,
                     modifier = Modifier.weight(1f),
@@ -768,7 +754,6 @@ fun CustomNotificationShadeOverlay(
                 )
             }
 
-            // Banner Izin Akses Notifikasi jika belum diaktifkan
             if (!hasNotifPermission) {
                 Row(
                     modifier = Modifier
@@ -781,7 +766,7 @@ fun CustomNotificationShadeOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Rounded.NotificationsOff, contentDescription = null, tint = Color(0xFFFDE68A))
+                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = Color(0xFFFDE68A))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Aktifkan Akses Notifikasi",
@@ -798,7 +783,6 @@ fun CustomNotificationShadeOverlay(
                 }
             }
 
-            // Header Daftar Notifikasi + Tombol Hapus Semua
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -825,7 +809,6 @@ fun CustomNotificationShadeOverlay(
                 }
             }
 
-            // Daftar Notifikasi dengan Ikon Aplikasi Seragam
             if (notifications.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -864,7 +847,6 @@ fun CustomNotificationShadeOverlay(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            // Ikon Aplikasi Pengirim Notifikasi Dibungkus Medali Seragam
                             UnifiedAppBadgeRaw(
                                 icon = item.appIcon,
                                 dominantColor = item.dominantColor,
@@ -920,7 +902,6 @@ fun CustomNotificationShadeOverlay(
                 }
             }
 
-            // Tombol Tutup di Bawah
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1232,20 +1213,20 @@ fun PhoneTopHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             SmallGlassButton(
-                icon = Icons.Rounded.ChildCare,
+                icon = Icons.Rounded.Person,
                 label = currentRobot.title,
                 tint = currentRobot.accent,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenRobotPicker
             )
             SmallGlassButton(
-                icon = if (isLockEnabled) Icons.Rounded.Lock else Icons.Rounded.Lock,
+                icon = Icons.Rounded.Lock,
                 label = "Lock",
                 tint = if (isLockEnabled) Color(0xFF6EE7B7) else Color.White.copy(0.6f),
                 onClick = onToggleLockScreen
             )
             SmallGlassButton(
-                icon = Icons.Rounded.Palette,
+                icon = Icons.Rounded.Star,
                 label = currentTheme.title,
                 tint = Color(0xFF6EE7B7),
                 onClick = onCycleTheme
@@ -1275,7 +1256,7 @@ fun SmallGlassButton(
             .background(Color(0xFF0E292B).copy(alpha = 0.65f))
             .border(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.30f), CircleShape)
             .combinedClickable(onClick = onClick)
-            .padding(horizontal = if (label.isEmpty()) 10.dp else 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
@@ -1655,8 +1636,6 @@ fun DockAppIcon(
     }
 }
 
-// --- ANIMASI MENGGEMASKAN FOTO BABY AXCEL + 6 ROBOT PROSEDURAL ---
-
 @Composable
 fun InteractiveRobotCanvas(
     robotType: RobotType,
@@ -2009,7 +1988,7 @@ fun RobotPickerDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Color(0xFF6EE7B7))
+                Icon(Icons.Rounded.Add, contentDescription = null, tint = Color(0xFF6EE7B7))
                 Column {
                     Text("Ganti dengan Foto Lain dari Galeri", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text("Kustomisasi avatar kapsul astronot", color = Color.White.copy(0.7f), fontSize = 11.sp)
@@ -2087,12 +2066,12 @@ fun AppContextDialog(
             HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
 
             ContextMenuRow(
-                icon = if (isPinned) Icons.Rounded.FavoriteBorder else Icons.Rounded.Favorite,
+                icon = Icons.Rounded.Favorite,
                 text = if (isPinned) "Hapus dari Kartu Favorit (♥)" else "Jadikan Kartu Favorit (♥)",
                 onClick = onTogglePin
             )
             ContextMenuRow(
-                icon = Icons.Rounded.Apps,
+                icon = Icons.Rounded.Home,
                 text = if (isDocked) "Hapus dari Dock Bawah" else "Pasang di Dock Bawah",
                 onClick = onToggleDock
             )
@@ -2153,7 +2132,7 @@ fun checkIsDefaultLauncher(context: Context): Boolean {
         }
         val resolveInfo = context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
         resolveInfo?.activityInfo?.packageName == context.packageName
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         false
     }
 }
@@ -2170,7 +2149,7 @@ fun saveCustomAvatarFromUri(context: Context, uri: Uri): Bitmap? {
             scaled.compress(Bitmap.CompressFormat.PNG, 95, out)
         }
         scaled
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }
@@ -2180,7 +2159,7 @@ fun loadSavedCustomAvatar(context: Context): ImageBitmap? {
         val file = File(context.filesDir, "baby_axcel_avatar.png")
         if (!file.exists()) return null
         BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }
@@ -2224,7 +2203,7 @@ fun extractDominantColor(bitmap: Bitmap): Color {
         val palette = Palette.from(bitmap).generate()
         val colorInt = palette.getVibrantColor(palette.getDominantColor(0xFF10B981.toInt()))
         Color(colorInt)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         Color(0xFF10B981)
     }
 }
@@ -2233,7 +2212,7 @@ fun getBatteryLevel(context: Context): Int {
     return try {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         100
     }
 }
@@ -2291,7 +2270,7 @@ fun openDefaultLauncherSettings(context: Context) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(homeSettings)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         val fallback = Intent(Settings.ACTION_SETTINGS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
