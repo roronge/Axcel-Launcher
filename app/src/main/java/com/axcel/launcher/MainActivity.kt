@@ -174,6 +174,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AxcelFullLauncherScreen() {
     val context = LocalContext.current
