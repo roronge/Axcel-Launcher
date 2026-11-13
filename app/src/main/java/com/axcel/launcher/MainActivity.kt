@@ -279,14 +279,17 @@ fun AxcelPhoneLauncherScreen() {
     val safeCenterIndex = centerCardIndex.coerceIn(0, (filteredApps.size - 1).coerceAtLeast(0))
     val activeCardApp = filteredApps.getOrNull(safeCenterIndex)
 
-    val scrollOffsetFraction by remember {
+        val scrollOffsetFraction by remember {
         derivedStateOf {
-            val item = listState.layoutInfo.visibleItemsInfo.find { it.index == safeCenterIndex }
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.find { it.index == safeCenterIndex }
             if (item == null || item.size == 0) 0f
             else {
-                val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.viewportEndOffset) / 2f
-                val itemCenter = item.offset + item.size / 2f
-                ((itemCenter - viewportCenter) / item.size).coerceIn(-1f, 1f)
+                val startPx = info.viewportStartOffset.toFloat()
+                val endPx = info.viewportEndOffset.toFloat()
+                val viewportCenter = (startPx + endPx) / 2f
+                val itemCenter = item.offset.toFloat() + (item.size.toFloat() / 2f)
+                ((itemCenter - viewportCenter) / item.size.toFloat()).coerceIn(-1f, 1f)
             }
         }
     }
